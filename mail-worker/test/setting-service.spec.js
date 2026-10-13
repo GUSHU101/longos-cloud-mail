@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import settingService, { normalizeRelayUrl } from '../src/service/setting-service';
+import settingService, { buildPublicSetting, normalizeRelayUrl } from '../src/service/setting-service';
 
 describe('LONGOS relay runtime defaults', () => {
 	it('uses the deployment URL when the database value is blank', () => {
@@ -22,5 +22,19 @@ describe('LONGOS relay runtime defaults', () => {
 		expect(normalizeRelayUrl(' https://relay.example.net/base/// ')).toBe('https://relay.example.net/base');
 		expect(() => normalizeRelayUrl('https://user:password@relay.example.net')).toThrow('must not contain credentials');
 		expect(() => normalizeRelayUrl('https://relay.example.net?target=other')).toThrow('must not contain a query');
+	});
+
+	it('builds an isolated response without mutating cached secrets', () => {
+		const cached = {
+			siteKey: 'site-secret',
+			resendTokens: { 'example.com': 'provider-secret' },
+		};
+		const response = buildPublicSetting(cached);
+
+		response.siteKey = 'masked';
+		response.resendTokens['example.com'] = 'masked';
+
+		expect(cached.siteKey).toBe('site-secret');
+		expect(cached.resendTokens['example.com']).toBe('provider-secret');
 	});
 });

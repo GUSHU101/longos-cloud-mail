@@ -33,6 +33,13 @@ function normalizeRelayUrl(value) {
 	return normalized;
 }
 
+function buildPublicSetting(settingRow) {
+	return {
+		...settingRow,
+		resendTokens: { ...(settingRow.resendTokens || {}) },
+	};
+}
+
 const settingService = {
 	applyRuntimeMailDefaults(c, settingRow) {
 		const runtimeSetting = { ...settingRow };
@@ -100,10 +107,11 @@ const settingService = {
 
 	async get(c, showSiteKey = false) {
 
-		const [settingRow, recordList] = await Promise.all([
-			await this.query(c),
+		const [cachedSetting, recordList] = await Promise.all([
+			this.query(c),
 			verifyRecordService.selectListByIP(c)
 		]);
+		const settingRow = buildPublicSetting(cachedSetting);
 
 
 		if (!showSiteKey) {
@@ -272,5 +280,5 @@ const settingService = {
 
 };
 
-export { normalizeRelayUrl };
+export { buildPublicSetting, normalizeRelayUrl };
 export default settingService;

@@ -71,6 +71,29 @@ describe('self-hosted relay signing', () => {
 		expect(result).toEqual({ data: { id: 'queue-123' } });
 	});
 
+	it('retries transient failures with the same idempotency payload and a fresh signature', async () => {
+		const secret = '0123456789abcdef0123456789abcdef';
+		const payload = { requestId: 'stable-request-id', subject: 'hello' };
+		const attempts = [];
+		const fetchMock = vi.fn(async (_url, options) => {
+			attempts.push({ body: options.body, nonce: options.headers['x-relay-nonce'] });
+			if (attempts.length === 1) throw new Error('connection reset');
+			return new Response(JSON.stringify({ accepted: true, queueId: 'stable-request-id' }), { status: 202 });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await selfHostedMailService.send(
+			{ env: { RELAY_SHARED_SECRET: secret } },
+			'https://relay.example.com',
+			payload,
+		);
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(attempts[0].body).toBe(attempts[1].body);
+		expect(attempts[0].nonce).not.toBe(attempts[1].nonce);
+		expect(result).toEqual({ data: { id: 'stable-request-id' } });
+	});
+
 	it('binds the selected account and user to the signed relay context', async () => {
 		const secret = '0123456789abcdef0123456789abcdef';
 		const fetchMock = vi.fn(async (_url, options) => {

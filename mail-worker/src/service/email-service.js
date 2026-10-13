@@ -25,6 +25,25 @@ import { att } from '../entity/att';
 import telegramService from './telegram-service';
 import selfHostedMailService from './self-hosted-mail-service';
 import { selectExternalMailProvider } from './mail-provider';
+import verifyUtils from '../utils/verify-utils';
+
+function validateSendInput(receiveEmail, attachments) {
+	if (!Array.isArray(receiveEmail) || receiveEmail.length === 0 || receiveEmail.some(item => !verifyUtils.isEmail(item))) {
+		throw new BizError(t('invalidRecipientList'));
+	}
+	if (!Array.isArray(attachments)) {
+		throw new BizError(t('invalidAttachmentList'));
+	}
+}
+
+function validateSendAttachments(imageDataList, attachments) {
+	if (imageDataList.length > 10) {
+		throw new BizError(t('imageAttLimit'));
+	}
+	if (attachments.length > 10) {
+		throw new BizError(t('attLimit'));
+	}
+}
 
 const emailService = {
 
@@ -262,15 +281,17 @@ const emailService = {
 			subject, //邮件标题
 			attachments = [] //附件
 		} = params;
+		validateSendInput(receiveEmail, attachments);
 
 		const { resendTokens, r2Domain, send, domainList, mailEngine = 'auto', relayUrl } = await settingService.query(c);
-
-		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
 
 		//判断是否关闭发件功能
 		if (send === settingConst.send.CLOSE) {
 			throw new BizError(t('disabledSend'), 403);
 		}
+
+		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
+		validateSendAttachments(imageDataList, attachments);
 
 		const userRow = await userService.selectById(c, userId);
 		const roleRow = await roleService.selectById(c, userRow.type);
@@ -458,17 +479,11 @@ const emailService = {
 
 		//保存内嵌附件
 		if (imageDataList.length > 0) {
-			if (imageDataList.length > 10) {
-				throw new BizError(t('imageAttLimit'));
-			}
 			await attService.saveArticleAtt(c, imageDataList, userId, accountId, emailResult.emailId);
 		}
 
 		//保存普通附件
 		if (attachments?.length > 0) {
-			if (attachments.length > 10) {
-				throw new BizError(t('attLimit'));
-			}
 			await attService.saveSendAtt(c, attachments, userId, accountId, emailResult.emailId);
 		}
 
@@ -1208,4 +1223,5 @@ const emailService = {
 	}
 };
 
+export { validateSendAttachments, validateSendInput };
 export default emailService;

@@ -1,6 +1,8 @@
 import BizError from '../error/biz-error';
 
 const encoder = new TextEncoder();
+const RETRYABLE_STATUS = new Set([429, 503, 504]);
+const MAX_ATTEMPTS = 2;
 
 function toHex(buffer) {
 	return [...new Uint8Array(buffer)]
@@ -59,44 +61,56 @@ const selfHostedMailService = {
 		}
 
 		const payload = JSON.stringify(params);
-		const timestamp = Math.floor(Date.now() / 1000).toString();
-		const nonce = crypto.randomUUID();
-		const signature = await sign(secret, timestamp, nonce, payload);
+		const endpoint = endpointFor(relayUrl);
+		let lastError;
 
-		let response;
-		try {
-			response = await fetch(endpointFor(relayUrl), {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					'x-relay-client': 'cloud-mail',
-					'x-relay-timestamp': timestamp,
-					'x-relay-nonce': nonce,
-					'x-relay-signature': signature,
-				},
-				body: payload,
-				signal: AbortSignal.timeout(20_000),
-			});
-		} catch (error) {
-			throw new BizError(`Self-hosted relay is unavailable: ${error.message}`);
+		for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+			const timestamp = Math.floor(Date.now() / 1000).toString();
+			const nonce = crypto.randomUUID();
+			const signature = await sign(secret, timestamp, nonce, payload);
+			let response;
+
+			try {
+				response = await fetch(endpoint, {
+					method: 'POST',
+					headers: {
+						'content-type': 'application/json',
+						'x-relay-client': 'cloud-mail',
+						'x-relay-timestamp': timestamp,
+						'x-relay-nonce': nonce,
+						'x-relay-signature': signature,
+					},
+					body: payload,
+					signal: AbortSignal.timeout(20_000),
+				});
+			} catch (error) {
+				lastError = new BizError(`Self-hosted relay is unavailable: ${error.message}`);
+				if (attempt < MAX_ATTEMPTS) continue;
+				throw lastError;
+			}
+
+			let body = {};
+			try {
+				body = await response.json();
+			} catch {
+				// Preserve the HTTP status when the relay did not return JSON.
+			}
+
+			if (response.ok && body.accepted) {
+				return {
+					data: {
+						id: body.queueId || body.messageId,
+					},
+				};
+			}
+
+			lastError = new BizError(body.message || `Self-hosted relay rejected the message (${response.status})`);
+			if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS) {
+				throw lastError;
+			}
 		}
 
-		let body = {};
-		try {
-			body = await response.json();
-		} catch {
-			// Preserve the HTTP status when the relay did not return JSON.
-		}
-
-		if (!response.ok || !body.accepted) {
-			throw new BizError(body.message || `Self-hosted relay rejected the message (${response.status})`);
-		}
-
-		return {
-			data: {
-				id: body.queueId || body.messageId,
-			},
-		};
+		throw lastError;
 	},
 };
 

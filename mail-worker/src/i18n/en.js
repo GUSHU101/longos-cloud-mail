@@ -30,6 +30,8 @@ const en = {
 	notExistEmailReply: 'Mail does not exist and cannot be replied to',
 	imageAttLimit: 'The maximum number of image attachments is 10',
 	attLimit: 'The maximum number of attachments is 10.',
+	invalidRecipientList: 'At least one valid recipient email is required',
+	invalidAttachmentList: 'Attachments must be provided as a list',
 	pwdLengthLimit: 'Password length exceeds the limit',
 	emailLengthLimit: 'Email length exceeds the limit',
 	minEmailPrefix: 'Email must be at least {{msg}} characters',

@@ -1,5 +1,23 @@
 # Changelog
 
+## v4.1.0 - 2026-10-14
+
+### Reliability
+
+- Prevented administrator setting responses from mutating request-cached secrets and provider tokens.
+- Added fail-fast recipient and attachment payload validation so malformed send requests return controlled business errors.
+- Moved outbound attachment-count validation ahead of provider delivery to prevent delivered messages from being reported as failed and retried.
+- Added one safe retry for transient self-hosted relay failures while preserving the same idempotency payload and rotating the HMAC nonce.
+- Replaced the relay's blocking Postfix health probe with an asynchronous, cached, timeout-bounded check.
+- Added relay concurrency and connection limits with retryable overload responses.
+
+### Quality and supply chain
+
+- Added end-to-end signed relay submission, idempotency, request-ID conflict, cached-setting isolation, attachment-limit, and retry tests.
+- Consolidated VueUse onto v15 to remove three simultaneously bundled major versions.
+- Pinned GitHub Actions to immutable commit SHAs and added production dependency audits, workflow concurrency, timeouts, and pre-deployment tests.
+- Added weekly Dependabot coverage for GitHub Actions and all three JavaScript workspaces.
+
 ## v4.0.1 - 2026-10-14
 
 ### Security

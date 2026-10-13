@@ -1,7 +1,8 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { basename } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { domainToASCII } from 'node:url';
 import nodemailer from 'nodemailer';
 import { verifySignedRequest } from './security.mjs';
@@ -17,6 +18,8 @@ const maxAttachmentBytes = toPositiveInt(process.env.MAX_ATTACHMENT_BYTES, 20 * 
 const maxRecipients = toPositiveInt(process.env.MAX_RECIPIENTS, 50);
 const maxRequestsPerMinute = toPositiveInt(process.env.MAX_REQUESTS_PER_MINUTE, 120);
 const maxRequestsPerMinuteGlobal = toPositiveInt(process.env.MAX_REQUESTS_PER_MINUTE_GLOBAL, maxRequestsPerMinute * 10);
+const maxConcurrentSends = toPositiveInt(process.env.MAX_CONCURRENT_SENDS, 25);
+const healthCacheTtlMs = toPositiveInt(process.env.HEALTH_CACHE_TTL_MS, 5_000);
 const signatureWindowSeconds = toPositiveInt(process.env.SIGNATURE_WINDOW_SECONDS, 300);
 const allowedSenderDomains = new Set(
   (process.env.ALLOWED_SENDER_DOMAINS || '')
@@ -38,30 +41,54 @@ if (allowedSenderDomains.size === 0) {
   throw new Error('ALLOWED_SENDER_DOMAINS must contain at least one domain');
 }
 
-const transporter = nodemailer.createTransport({
-  sendmail: true,
-  newline: 'unix',
-  path: '/usr/sbin/sendmail',
-});
+const transporter = process.env.NODE_ENV === 'test' && process.env.RELAY_TEST_TRANSPORT === 'stream'
+  ? nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' })
+  : nodemailer.createTransport({
+    sendmail: true,
+    newline: 'unix',
+    path: '/usr/sbin/sendmail',
+  });
+const execFileAsync = promisify(execFile);
 
 const usedNonces = new Map();
 const completedRequests = new Map();
 const inFlightRequests = new Set();
 const rateBuckets = new Map();
 let globalRateBucket = { minute: -1, count: 0 };
+let healthResult = { checkedAt: 0, healthy: false };
+let healthCheckPromise;
 
 function toPositiveInt(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function json(response, status, body) {
+function json(response, status, body, extraHeaders = {}) {
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
+    ...extraHeaders,
   });
   response.end(JSON.stringify(body));
+}
+
+async function checkPostfixHealth() {
+  const now = Date.now();
+  if (now - healthResult.checkedAt < healthCacheTtlMs) return healthResult.healthy;
+  if (!healthCheckPromise) {
+    healthCheckPromise = execFileAsync('postfix', ['status'], { timeout: 2_000 })
+      .then(() => true)
+      .catch(() => false)
+      .then(healthy => {
+        healthResult = { checkedAt: Date.now(), healthy };
+        return healthy;
+      })
+      .finally(() => {
+        healthCheckPromise = undefined;
+      });
+  }
+  return healthCheckPromise;
 }
 
 function rateLimitExceeded(key) {
@@ -345,6 +372,14 @@ async function handleSend(request, response) {
   if (inFlightRequests.has(replayKey)) {
     return json(response, 409, { accepted: false, message: 'Request is already being processed' });
   }
+  if (inFlightRequests.size >= maxConcurrentSends) {
+    return json(
+      response,
+      503,
+      { accepted: false, message: 'Relay is at capacity; retry later' },
+      { 'retry-after': '1' },
+    );
+  }
   if (rateLimitExceeded(rateKey)) {
     return json(response, 429, { accepted: false, message: 'Rate limit exceeded' });
   }
@@ -381,9 +416,9 @@ async function handleSend(request, response) {
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && request.url === '/health') {
-      const postfix = spawnSync('postfix', ['status'], { stdio: 'ignore' });
-      return json(response, postfix.status === 0 ? 200 : 503, {
-        status: postfix.status === 0 ? 'ok' : 'degraded',
+      const healthy = await checkPostfixHealth();
+      return json(response, healthy ? 200 : 503, {
+        status: healthy ? 'ok' : 'degraded',
       });
     }
     if (request.method === 'POST' && request.url === '/v1/send') {
@@ -405,6 +440,8 @@ const server = http.createServer(async (request, response) => {
 server.headersTimeout = 10_000;
 server.requestTimeout = 30_000;
 server.keepAliveTimeout = 5_000;
+server.maxConnections = toPositiveInt(process.env.MAX_CONNECTIONS, 100);
+server.maxRequestsPerSocket = toPositiveInt(process.env.MAX_REQUESTS_PER_SOCKET, 100);
 
 if (process.env.RELAY_NO_LISTEN !== 'true') {
   server.listen(port, '0.0.0.0', () => {

@@ -34,7 +34,7 @@
 
 只需要一个域名，就可以创建多个不同的邮箱，类似各大邮箱平台。本项目支持部署到 Cloudflare Workers，降低服务器成本，搭建自己的邮箱服务。
 
-本发行版保留 [maillab/cloud-mail](https://github.com/maillab/cloud-mail) 的上游授权与来源说明，并集成 LONGOS 自建邮件引擎。新版独立仓库为 [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail)，当前正式版本：**v4.0.1**。
+本发行版保留 [maillab/cloud-mail](https://github.com/maillab/cloud-mail) 的上游授权与来源说明，并集成 LONGOS 自建邮件引擎。新版独立仓库为 [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail)，当前正式版本：**v4.1.0**。
 
 ## 项目展示
 

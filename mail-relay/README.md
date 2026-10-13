@@ -90,5 +90,6 @@ https://relay-api.example.com
 - Cloud Mail 在 Worker 内同时校验发件账户归属和角色域名权限；中继只接受选中账户的发件地址。
 - 签名载荷包含用户/账户上下文，日志只记录租户键、账户 ID 和发件域，不记录邮件内容。
 - Postfix 仅监听容器回环地址，不能作为公网 Open Relay。
-- API 有请求体、附件、To/Cc/Bcc 总人数和单发件身份每分钟请求数限制。
+- API 有请求体、附件、To/Cc/Bcc 总人数、单发件身份每分钟请求数、并发投递和连接数限制。
+- `/health` 使用带超时和短缓存的异步 Postfix 探测，不会因高频健康检查阻塞投递事件循环。
 - 密钥只保存在服务器 `.env` 和 Cloudflare Worker secret 中，不能提交到 Git。

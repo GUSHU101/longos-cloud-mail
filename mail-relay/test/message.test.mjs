@@ -7,8 +7,29 @@ process.env.LONGOS_RELAY_SHARED_SECRET = 'longos-longos-longos-longos-123456';
 process.env.CLOUD_MAIL_RELAY_SHARED_SECRET = 'cloud-mail-cloud-mail-cloud-123456';
 process.env.ALLOWED_SENDER_DOMAINS = 'mail.example.com';
 process.env.RELAY_NO_LISTEN = 'true';
+process.env.NODE_ENV = 'test';
+process.env.RELAY_TEST_TRANSPORT = 'stream';
 
 const { normalizeAddress, normalizeMessage, server } = await import('../src/server.mjs');
+
+let nonceSequence = 0;
+
+async function signedSend(body) {
+  const rawBody = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = `e2e-${Date.now()}-${nonceSequence += 1}`;
+  return fetch(`http://127.0.0.1:${server.address().port}/v1/send`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-relay-client': 'cloud-mail',
+      'x-relay-timestamp': timestamp,
+      'x-relay-nonce': nonce,
+      'x-relay-signature': createSignature(process.env.CLOUD_MAIL_RELAY_SHARED_SECRET, timestamp, nonce, rawBody),
+    },
+    body: rawBody,
+  });
+}
 
 test('normalizes safe mailbox syntax and rejects address-list injection', () => {
   assert.equal(normalizeAddress('sales+orders@MAIL.EXAMPLE.COM', 'sender'), 'sales+orders@mail.example.com');
@@ -93,6 +114,36 @@ test('rejects a valid client signature with a mismatched sender context', async 
       body,
     });
     assert.equal(response.status, 403);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('queues a signed message idempotently and rejects request ID reuse', async () => {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const message = {
+      requestId: 'cloud-mail:e2e:1',
+      from: { address: 'sales@mail.example.com', name: 'Sales' },
+      to: ['buyer@example.net'],
+      subject: 'Order update',
+      text: 'Your order has shipped.',
+      senderContext: { source: 'cloud-mail', tenantId: '7', accountId: '9', category: 'compose' },
+    };
+
+    const firstResponse = await signedSend(message);
+    const firstBody = await firstResponse.json();
+    assert.equal(firstResponse.status, 202);
+    assert.equal(firstBody.accepted, true);
+    assert.equal(firstBody.queueId, message.requestId);
+
+    const retryResponse = await signedSend(message);
+    assert.equal(retryResponse.status, 202);
+    assert.deepEqual(await retryResponse.json(), firstBody);
+
+    const conflictResponse = await signedSend({ ...message, subject: 'Changed content' });
+    assert.equal(conflictResponse.status, 409);
+    assert.match((await conflictResponse.json()).message, /different content/);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

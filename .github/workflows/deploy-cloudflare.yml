@@ -31,6 +31,7 @@ jobs:
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_NAME: ${{ secrets.D1_DATABASE_NAME || vars.D1_DATABASE_NAME || secrets.NAME || vars.NAME || 'cloud-mail' }}
       D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
       KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
       R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
@@ -97,8 +98,19 @@ jobs:
             exit 1
           fi
 
+          ADMIN_DOMAIN="${ADMIN##*@}"
+          if ! jq -e --arg admin_domain "${ADMIN_DOMAIN,,}" 'map(ascii_downcase) | index($admin_domain) != null' <<< "$DOMAIN" >/dev/null; then
+            echo "❌ ADMIN must use one of the domains configured in DOMAIN."
+            exit 1
+          fi
+
           if [[ ! "$NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
             echo "❌ NAME must use lowercase letters, numbers, underscores, or hyphens."
+            exit 1
+          fi
+
+          if [[ ! "$D1_DATABASE_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
+            echo "❌ D1_DATABASE_NAME must use lowercase letters, numbers, underscores, or hyphens."
             exit 1
           fi
 
@@ -191,6 +203,7 @@ jobs:
           fi
 
           sed -i "s|\${NAME}|${NAME}|g" "$CONFIG_FILE"
+          sed -i "s|\${D1_DATABASE_NAME}|${D1_DATABASE_NAME}|g" "$CONFIG_FILE"
           sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
           sed -i "s|\"\${DOMAIN}\"|${DOMAIN}|g" "$CONFIG_FILE"
           sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
@@ -264,15 +277,15 @@ jobs:
             exit 1
           fi
 
-          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
-            echo "✅ Database $NAME already exists."
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
+          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$D1_DATABASE_NAME\")" >/dev/null; then
+            echo "✅ Database $D1_DATABASE_NAME already exists."
+            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$D1_DATABASE_NAME\") | .uuid")
             echo "D1_DATABASE_ID: $D1_ID"
           else
-            echo "⚠️ Database $NAME does not exist. Starting creation..."
-            pnpm wrangler d1 create "$NAME"
+            echo "⚠️ Database $D1_DATABASE_NAME does not exist. Starting creation..."
+            pnpm wrangler d1 create "$D1_DATABASE_NAME"
             DB_LIST=$(pnpm wrangler d1 list --json)
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
+            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$D1_DATABASE_NAME\") | .uuid")
           fi
 
           sed -i "s|\${D1_DATABASE_ID}|$D1_ID|g" "$CONFIG_FILE"

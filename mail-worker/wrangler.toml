@@ -41,7 +41,9 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 #orm_log = false			#是否sql日志
 #domain = []				#邮件域名可可配置多个 示例: ["example1.com","example2.com"]
 #admin = ""					#管理员的邮箱	示例: admin@example.com
-#jwt_secret = ""			#jwt令牌的密钥,随便填一串字符串
+#longos_relay_url = ""		#LONGOS 自建中继 HTTPS 地址；不用时留空
+# jwt_secret 必须使用 `wrangler secret put jwt_secret` 写入，至少 32 位 URL-safe 随机字符。
+# 不要把 jwt_secret、Cloudflare API Token 或其他凭据写入 [vars] 或提交到 Git。
 # RELAY_SHARED_SECRET must be stored with `wrangler secret put RELAY_SHARED_SECRET`.
 # Do not put the relay secret in this file or commit it to Git.
 

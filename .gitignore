@@ -24,6 +24,7 @@ dist
 mail-vue/node_modules
 mail-vue/dist
 .wrangler
+mail-worker/wrangler-production.toml
 .venv
 git-tools.js
 /mail-relay/.env

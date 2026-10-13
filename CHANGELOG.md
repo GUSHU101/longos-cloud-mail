@@ -1,5 +1,20 @@
 # Changelog
 
+## v4.1.1 - 2026-10-14
+
+### Deployment and documentation
+
+- Added a complete Chinese Cloudflare Workers deployment guide covering least-privilege API Tokens, D1, KV, R2, GitHub Actions, custom domains, Email Routing, first initialization, validation, backups, upgrades, rollbacks, and troubleshooting.
+- Linked the Cloudflare and LONGOS deployment paths directly from both READMEs.
+- Replaced the obsolete feature-branch upgrade instructions and the nonexistent `/api/health` check with the current `main` workflow and public configuration endpoint.
+- Added an ignored local `wrangler-production.toml` path for safe manual deployments.
+
+### Reliability
+
+- Stopped hard-coding the D1 database name in generated production configuration.
+- Added a distinct `D1_DATABASE_NAME` setting so explicit D1 IDs remain paired with their real resource names.
+- Added fail-fast validation requiring the administrator address to belong to one of the configured mail domains.
+
 ## v4.1.0 - 2026-10-14
 
 ### Reliability

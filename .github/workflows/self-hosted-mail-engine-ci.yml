@@ -3,6 +3,8 @@ name: Self-hosted mail engine CI
 on:
   workflow_dispatch:
   push:
+    branches-ignore:
+      - "dependabot/**"
     paths:
       - "mail-relay/**"
       - "mail-worker/**"

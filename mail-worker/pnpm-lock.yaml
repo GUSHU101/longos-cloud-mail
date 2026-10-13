@@ -37,8 +37,8 @@ importers:
         specifier: ^0.18.13
         version: 0.18.13
       postal-mime:
-        specifier: ^2.4.3
-        version: 2.4.4
+        specifier: ^4.0.5
+        version: 4.0.5
       resend:
         specifier: ^6.32.1
         version: 6.32.1(@react-email/render@1.1.2(react-dom@19.1.1(react@19.1.1))(react@19.1.1))
@@ -1663,11 +1663,12 @@ packages:
     resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
     engines: {node: '>=12'}
 
-  postal-mime@2.4.4:
-    resolution: {integrity: sha512-LDaFIsmGO+uNnPu28H52cubuHrovfewviU8Y8p+KgIKGVF871t/IQxzlO8QwhJMiG0ih2Lk2jTL3aGVoNz3NZQ==}
-
   postal-mime@2.7.6:
     resolution: {integrity: sha512-UUlyE2KlxmvwMGq060onF/VWU3zD6dVW31FwokQ5v26jWd35fbs2MoTFzh+jXnPwAyV2MULMKXcBInGOl5TO6Q==}
+
+  postal-mime@4.0.5:
+    resolution: {integrity: sha512-fWu1Cmo2ef6LCwgHU1fVrqo55eyFP31F7hH0j/wMWkQYYdh+H8zz3nBf3EYRQelkmTfDrbDfTvPUQEBT8DS/jw==}
+    engines: {node: '>=20'}
 
   postcss@8.5.30:
     resolution: {integrity: sha512-zkd+e9S1AQHhmaBKye9zlFHWjOwVgqXl1q3ECYy8561K7qxR2cREf/STLskulBFd78k6AOFeA+ff1TtEzk9bAA==}
@@ -3252,9 +3253,9 @@ snapshots:
 
   picomatch@4.0.4: {}
 
-  postal-mime@2.4.4: {}
-
   postal-mime@2.7.6: {}
+
+  postal-mime@4.0.5: {}
 
   postcss@8.5.30:
     dependencies:

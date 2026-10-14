@@ -1,5 +1,29 @@
 # Changelog
 
+## v4.2.0 - 2026-10-14
+
+### Security
+
+- Replaced new single-pass SHA-256 password hashes with versioned PBKDF2-HMAC-SHA256 hashes, while transparently upgrading legacy hashes after a successful login.
+- Replaced predictable random-password generation with rejection-sampled Web Crypto randomness.
+- Hardened JWT parsing, signing-algorithm checks, payload validation, secret requirements, and malformed-token rejection.
+- Replaced public batch-user SQL interpolation with fully bound D1 statements and added strict batch, domain, role, password, search, and pagination limits.
+- Added mandatory signature verification for Resend webhooks using the raw payload and Svix headers; unsupported events no longer alter delivery status.
+- Removed password hashes and salts from administrator user-list responses and stopped returning unexpected internal exception messages to clients.
+
+### Reliability
+
+- Fixed logout removing the wrong session token and accidentally persisting remaining sessions without expiration.
+- Preserved raw inbound-message bytes across stream chunk boundaries and rejected deleted, banned, or unavailable recipients before storage.
+- Made v3.0-v3.4 D1 migrations independently idempotent and fail closed on operational or SQL errors instead of silently accepting partial upgrades.
+- Added bounded account/user queries, normalized configured mail domains, guarded missing records, and enforced account ownership on state-changing operations.
+- Added GitHub Actions and manual deployment support for the `RESEND_WEBHOOK_SECRET` Worker Secret, with a complete signed-webhook setup procedure.
+
+### Quality
+
+- Expanded Worker regression coverage from 23 to 42 tests across passwords, JWTs, sessions, authorization boundaries, public API SQL binding, webhook verification, and migration failures.
+- Removed leftover login-page debug logging.
+
 ## v4.1.1 - 2026-10-14
 
 ### Deployment and documentation

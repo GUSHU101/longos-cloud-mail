@@ -151,6 +151,7 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 | `CLOUDFLARE_API_TOKEN` | 是 | 第 4 节创建的 Token |
 | `JWT_SECRET` | 是 | 初始化和 JWT 签名密钥，至少 32 个 URL-safe 字符 |
 | `RELAY_SHARED_SECRET` | 仅 LONGOS 发信 | 必须与 LONGOS 的 `CLOUD_MAIL_RELAY_SHARED_SECRET` 逐字一致 |
+| `RESEND_WEBHOOK_SECRET` | 仅 Resend 状态回调 | Resend 为 Webhook 签发的 `whsec_...` 密钥，不能使用 API Token 代替 |
 
 生成 `JWT_SECRET`：
 
@@ -168,7 +169,18 @@ $bytes = New-Object byte[] 32
 
 不要把 `JWT_SECRET` 当成管理员登录密码。首次初始化只建表；部署完成后用 `ADMIN` 地址在注册页面创建账户，该账户会被识别为管理员。
 
-### 6.3 三种典型配置
+### 6.3 配置 Resend 投递状态回调（仅使用 Resend 时）
+
+1. 先完成 Worker 自定义域部署，确认 `https://mail.example.com` 可以访问；
+2. 在 Resend 创建 Webhook，Endpoint 填写 `https://mail.example.com/api/webhooks`；
+3. 至少订阅 `email.sent`、`email.delivered`、`email.bounced`、`email.complained`、`email.delivery_delayed` 和 `email.failed`；
+4. 复制该 Webhook 的 Signing Secret，而不是 Resend API Token；
+5. 将 Signing Secret 保存为 GitHub Actions Secret `RESEND_WEBHOOK_SECRET`；
+6. 重新运行生产部署工作流，使密钥写入 Cloudflare Worker Secret。
+
+Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signature` 校验签名。未配置密钥、签名错误、时间戳过期或载荷过大时均不会修改邮件状态。
+
+### 6.4 三种典型配置
 
 | 场景 | `CF_EMAIL` | `LONGOS_RELAY_URL` | `RELAY_SHARED_SECRET` | R2 |
 |---|---:|---|---|---|
@@ -214,7 +226,7 @@ $bytes = New-Object byte[] 32
 6. 创建或复用 D1；
 7. 构建 Vue 前端并部署 Worker；
 8. 用 `wrangler secret put` 写入 `jwt_secret`；
-9. 如已配置，再写入 `RELAY_SHARED_SECRET`；
+9. 如已配置，再写入 `RELAY_SHARED_SECRET` 和 `RESEND_WEBHOOK_SECRET`；
 10. 调用 `POST /api/init` 创建或升级 D1 结构。
 
 正常情况下最后一步显示 `Setup completed`。如果任何校验或初始化失败，本次工作流为失败状态，不应继续配置邮件路由。
@@ -233,6 +245,7 @@ Cloudflare Dashboard → Workers & Pages → 目标 Worker：
 - 配置 Workers AI 时应看到 `ai`；
 - Secrets 中应看到 `jwt_secret`，但不能读取原值；
 - 使用 LONGOS 时还应看到 `RELAY_SHARED_SECRET`。
+- 使用 Resend 状态回调时还应看到 `RESEND_WEBHOOK_SECRET`。
 
 ### 9.2 自定义域名
 
@@ -408,6 +421,12 @@ pnpm wrangler secret put jwt_secret -c wrangler-production.toml
 
 ```bash
 pnpm wrangler secret put RELAY_SHARED_SECRET -c wrangler-production.toml
+```
+
+使用 Resend 状态回调时继续写入 Webhook Signing Secret：
+
+```bash
+pnpm wrangler secret put RESEND_WEBHOOK_SECRET -c wrangler-production.toml
 ```
 
 Secret 写入会创建新的 Worker 版本。写入完成后调用初始化：

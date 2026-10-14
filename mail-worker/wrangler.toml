@@ -45,7 +45,8 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 # jwt_secret 必须使用 `wrangler secret put jwt_secret` 写入，至少 32 位 URL-safe 随机字符。
 # 不要把 jwt_secret、Cloudflare API Token 或其他凭据写入 [vars] 或提交到 Git。
 # RELAY_SHARED_SECRET must be stored with `wrangler secret put RELAY_SHARED_SECRET`.
-# Do not put the relay secret in this file or commit it to Git.
+# RESEND_WEBHOOK_SECRET must be stored with `wrangler secret put RESEND_WEBHOOK_SECRET`.
+# Do not put relay or webhook secrets in this file or commit them to Git.
 
 [build]
 command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"

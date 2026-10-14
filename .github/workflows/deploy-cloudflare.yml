@@ -41,6 +41,7 @@ jobs:
       ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || false }}
       LONGOS_RELAY_URL: ${{ secrets.LONGOS_RELAY_URL || vars.LONGOS_RELAY_URL }}
       RELAY_SHARED_SECRET: ${{ secrets.RELAY_SHARED_SECRET }}
+      RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
 
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
@@ -178,6 +179,11 @@ jobs:
               echo "❌ RELAY_SHARED_SECRET must contain at least 32 characters when LONGOS_RELAY_URL is configured."
               exit 1
             fi
+          fi
+
+          if [ -n "$RESEND_WEBHOOK_SECRET" ] && [[ ! "$RESEND_WEBHOOK_SECRET" =~ ^whsec_[A-Za-z0-9_+/=-]{16,}$ ]]; then
+            echo "❌ RESEND_WEBHOOK_SECRET must be the signing secret issued by Resend (whsec_...)."
+            exit 1
           fi
 
           CONFIG_FILE="wrangler-action.toml"
@@ -326,6 +332,12 @@ jobs:
         working-directory: ./mail-worker
         run: |
           printf '%s' "$RELAY_SHARED_SECRET" | pnpm wrangler secret put RELAY_SHARED_SECRET -c wrangler-action.toml
+
+      - name: 🔐 配置 Resend Webhook 签名密钥 / Configure Resend webhook secret
+        if: ${{ env.RESEND_WEBHOOK_SECRET != '' }}
+        working-directory: ./mail-worker
+        run: |
+          printf '%s' "$RESEND_WEBHOOK_SECRET" | pnpm wrangler secret put RESEND_WEBHOOK_SECRET -c wrangler-action.toml
 
       - name: ♻️ 初始化数据库 / Initialize database
         run: |

@@ -1,6 +1,8 @@
 # Cloud Mail + LONGOS 一体化自建邮件部署与升级
 
-本文适用于 `feature/self-hosted-mail-engine` 分支，目标是在同一台服务器部署 LONGOS 网站、Postfix 和 OpenDKIM，并让 Cloudflare Worker 通过 LONGOS 的 HTTPS 入口发信。服务器端不需要再单独克隆或部署本仓库的 `mail-relay` 目录。
+本文适用于新版独立仓库 `GUSHU101/longos-cloud-mail` 的 `main` 分支和正式 Release，目标是在同一台服务器部署 LONGOS 网站、Postfix 和 OpenDKIM，并让 Cloudflare Worker 通过 LONGOS 的 HTTPS 入口发信。服务器端不需要再单独克隆或部署本仓库的 `mail-relay` 目录。
+
+Cloudflare 账户、API Token 权限、D1/KV/R2 创建、自定义域名、Email Routing、GitHub Actions 首次部署、初始化、备份和回滚的逐步操作已独立整理为：[Cloudflare Workers 完整部署手册](./CLOUDFLARE_WORKERS_DEPLOYMENT.md)。请先完成该手册，再回到本文接入 LONGOS 出站邮件。
 
 ## 1. 架构与边界
 
@@ -130,6 +132,7 @@ Settings -> Secrets and variables -> Actions
 | 名称 | 示例 | 说明 |
 |---|---|---|
 | `NAME` | `cloud-mail` | Worker、D1、KV 默认名称 |
+| `D1_DATABASE_NAME` | `cloud-mail` | D1 真实名称；默认与 `NAME` 相同 |
 | `CUSTOM_DOMAIN` | `mail.example.com` | 不带协议和路径 |
 | `DOMAIN` | `["example.com"]` | 必须是 JSON 数组 |
 | `ADMIN` | `admin@example.com` | Cloud Mail 管理员地址 |
@@ -153,7 +156,7 @@ Settings -> Secrets and variables -> Actions
 
 `RELAY_SHARED_SECRET` 必须与 LONGOS 的 Cloud Mail 专用密钥逐字一致，不能填 `MAIL_RELAY_SHARED_SECRET`。工作流会把 `JWT_SECRET` 和 `RELAY_SHARED_SECRET` 直接写入 Cloudflare Worker Secret，不会放入 `wrangler.toml`、网页或数据库。
 
-首次部署可以不填 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`；工作流会优先查找与 `NAME` 同名的现有资源，不存在时才创建。已有生产数据时，建议显式填写原 D1/KV ID，避免绑定到新资源。
+首次部署可以不填 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`；工作流会优先查找与 `D1_DATABASE_NAME` 同名的 D1 和与 `NAME` 同名的 KV，不存在时才创建。已有生产数据时，建议显式填写原 D1/KV ID，避免绑定到新资源；`D1_DATABASE_NAME` 必须与该 ID 对应数据库的真实名称一致。
 
 `LONGOS_RELAY_URL` 和 `RELAY_SHARED_SECRET` 必须成对配置。只有以下命令成功后才应填写：
 
@@ -198,7 +201,7 @@ npx wrangler versions upload
 
 ```bash
 curl -fsS https://mail.example.com/ >/dev/null
-curl -fsS https://mail.example.com/api/health
+curl -fsS https://mail.example.com/api/setting/websiteConfig
 ```
 
 再打开 Cloud Mail 的“系统设置”，确认页面已出现邮件引擎和 LONGOS 中继配置。
@@ -255,15 +258,16 @@ DKIM 私钥和 Postfix 队列位于 Docker 持久卷，普通容器重建不会�
 
 ## 9. 升级
 
-### 9.1 升级 Cloud Mail 分支
+### 9.1 升级 Cloud Mail 正式主线
 
 ```bash
-git fetch origin
-git switch feature/self-hosted-mail-engine
-git pull --ff-only origin feature/self-hosted-mail-engine
+git remote set-url origin https://github.com/GUSHU101/longos-cloud-mail.git
+git fetch --tags origin
+git switch main
+git pull --ff-only origin main
 ```
 
-代码同步后，在 GitHub Actions 手动运行部署工作流并选择同一分支。工作流会重新构建前端和 Worker，并调用初始化接口执行兼容的 D1 结构升级。
+代码同步后，在 GitHub Actions 手动运行部署工作流并选择 `main` 或明确的稳定 Tag。工作流会重新构建前端和 Worker，并调用初始化接口执行兼容的 D1 结构升级。升级前先按 [Cloudflare Workers 完整部署手册](./CLOUDFLARE_WORKERS_DEPLOYMENT.md#14-升级前备份) 导出 D1 备份。
 
 ### 9.2 升级 LONGOS
 

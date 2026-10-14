@@ -32,11 +32,13 @@
 ## Description
 With only one domain, you can create multiple different email addresses, similar to major email platforms. This project can be deployed on Cloudflare Workers to reduce server costs and build your own email service.
 
-This distribution retains the upstream license and attribution for [maillab/cloud-mail](https://github.com/maillab/cloud-mail) and adds the LONGOS self-hosted mail engine. Its canonical repository is [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail). Current stable release: **v4.1.0**.
+This distribution retains the upstream license and attribution for [maillab/cloud-mail](https://github.com/maillab/cloud-mail) and adds the LONGOS self-hosted mail engine. Its canonical repository is [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail). Current stable release: **v4.1.1**.
 ## Project Showcase
 
 - [Live Demo](https://skymail.ink)<br>
 - [Deployment Guide](https://doc.skymail.ink/en/)<br>
+- [Step-by-step Cloudflare Workers deployment guide (Chinese)](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md)<br>
+- [Integrated Cloud Mail + LONGOS self-hosted delivery guide (Chinese)](./doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)<br>
 
 
 | ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
@@ -92,6 +94,8 @@ This distribution retains the upstream license and attribution for [maillab/clou
 ## Integrated LONGOS self-hosted sending
 
 When Cloud Mail is paired with LONGOS, LONGOS `./install.sh` builds and starts Postfix/OpenDKIM together with the website. There is no second relay deployment. The Worker submits HMAC-signed requests to `https://your-longos-site/_longos/mail-relay`.
+
+For the exact Cloudflare Account, API Token, D1/KV/R2, GitHub Actions, custom-domain, Email Routing, initialization, upgrade, and rollback procedure, follow the [complete Cloudflare Workers deployment guide](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md).
 
 Set `LONGOS_RELAY_URL` and save LONGOS's `CLOUD_MAIL_RELAY_SHARED_SECRET` as `RELAY_SHARED_SECRET` in this repository's GitHub Actions settings, then manually run `Deploy cloud-mail to Cloudflare Workers` from `main`. The deployment workflow installs the Worker secret automatically and Auto mode prefers the LONGOS engine. Keep Cloudflare Git Builds disabled so two deployment systems cannot overwrite the same Worker. LONGOS and Cloud Mail use separate signing keys. Standalone Cloud Mail deployments can still use the generic [`mail-relay`](./mail-relay/README.md) procedure.
 

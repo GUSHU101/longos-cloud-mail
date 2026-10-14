@@ -20,6 +20,14 @@ const base64urlDecode = (str) => {
 	return Uint8Array.from(atob(str), c => c.charCodeAt(0));
 };
 
+const isCanonicalBase64url = (value) => {
+	try {
+		return base64url(base64urlDecode(value)) === value;
+	} catch {
+		return false;
+	}
+};
+
 const jwtUtils = {
 	async generateToken(c, payload, expiresInSeconds) {
 		const header = {
@@ -59,6 +67,7 @@ const jwtUtils = {
 			if (typeof token !== 'string' || token.length > 4096) return null;
 			const segments = token.split('.');
 			if (segments.length !== 3 || segments.some(segment => !/^[A-Za-z0-9_-]+$/.test(segment))) return null;
+			if (segments.some(segment => !isCanonicalBase64url(segment))) return null;
 			const [headerB64, payloadB64, signatureB64] = segments;
 
 			if (!headerB64 || !payloadB64 || !signatureB64) return null;
@@ -100,5 +109,5 @@ const jwtUtils = {
 	}
 };
 
-export { base64url, base64urlDecode, signingSecret };
+export { base64url, base64urlDecode, isCanonicalBase64url, signingSecret };
 export default jwtUtils;

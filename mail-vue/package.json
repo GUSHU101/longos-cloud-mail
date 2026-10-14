@@ -11,7 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@iconify/vue": "^4.3.0",
+    "@iconify/vue": "^5.0.3",
     "@vueuse/components": "^15.0.0",
     "@vueuse/core": "^15.0.0",
     "axios": "1.20.0",

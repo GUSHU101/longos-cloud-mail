@@ -24,7 +24,8 @@ const loginService = {
 
 	async register(c, params, oauth = false) {
 
-		const { email, password, token, code } = params;
+		let { email, password, token, code } = params || {};
+		email = emailUtils.normalizeAddress(email);
 
 		let { regKey, register, registerVerify, regVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c)
 
@@ -53,7 +54,7 @@ const loginService = {
 			throw new BizError(t('emailLengthLimit'));
 		}
 
-		if (password.length > 30) {
+		if (typeof password !== 'string' || password.length > 30) {
 			throw new BizError(t('pwdLengthLimit'));
 		}
 
@@ -61,7 +62,7 @@ const loginService = {
 			throw new BizError(t('pwdMinLength'));
 		}
 
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+		if (!emailUtils.isAllowedDomain(email, c.env.domain)) {
 			throw new BizError(t('notEmailDomain'));
 		}
 
@@ -93,12 +94,14 @@ const loginService = {
 		let defType = null
 
 		if (!type) {
-			const roleRow = await roleService.selectDefaultRole(c);
-			defType = roleRow.roleId
+			const defaultRole = await roleService.selectDefaultRole(c);
+			if (!defaultRole) throw new BizError(t('roleNotExist'));
+			defType = defaultRole.roleId
 		}
 
 
 		const roleRow = await roleService.selectById(c, type || defType);
+		if (!roleRow) throw new BizError(t('roleNotExist'));
 
 		if(!roleService.hasAvailDomainPerm(roleRow.availDomain, email)) {
 
@@ -201,9 +204,10 @@ const loginService = {
 
 	async login(c, params, noVerifyPwd = false) {
 
-		const { email, password } = params;
+		const email = emailUtils.normalizeAddress(params?.email);
+		const password = params?.password;
 
-		if ((!email || !password) && !noVerifyPwd) {
+		if ((!email || typeof password !== 'string' || !password) && !noVerifyPwd) {
 			throw new BizError(t('emailAndPwdEmpty'));
 		}
 
@@ -221,8 +225,16 @@ const loginService = {
 			throw new BizError(t('isBanUser'));
 		}
 
-		if (!await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password) && !noVerifyPwd) {
+		const passwordValid = noVerifyPwd || await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password);
+		if (!passwordValid) {
 			throw new BizError(t('IncorrectPwd'));
+		}
+
+		if (!noVerifyPwd && cryptoUtils.needsRehash(userRow.password)) {
+			const { salt, hash } = await cryptoUtils.hashPassword(password);
+			await userService.updatePasswordHash(c, userRow.userId, hash, salt);
+			userRow.password = hash;
+			userRow.salt = salt;
 		}
 
 		const uuid = uuidv4();
@@ -230,19 +242,22 @@ const loginService = {
 
 		let authInfo = await c.env.kv.get(KvConst.AUTH_INFO + userRow.userId, { type: 'json' });
 
-		if (authInfo && (authInfo.user.email === userRow.email)) {
+		const sessionUser = { userId: userRow.userId, email: userRow.email };
 
-			if (authInfo.tokens.length > 10) {
+		if (authInfo?.user?.email === userRow.email && Array.isArray(authInfo.tokens)) {
+
+			if (authInfo.tokens.length >= 10) {
 				authInfo.tokens.shift();
 			}
 
 			authInfo.tokens.push(uuid);
+			authInfo.user = sessionUser;
 
 		} else {
 
 			authInfo = {
 				tokens: [],
-				user: userRow,
+				user: sessionUser,
 				refreshTime: dayjs().toISOString()
 			};
 
@@ -257,11 +272,19 @@ const loginService = {
 	},
 
 	async logout(c, userId) {
-		const token =userContext.getToken(c);
+		const token = await userContext.getToken(c);
 		const authInfo = await c.env.kv.get(KvConst.AUTH_INFO + userId, { type: 'json' });
-		const index = authInfo.tokens.findIndex(item => item === token);
-		authInfo.tokens.splice(index, 1);
-		await c.env.kv.put(KvConst.AUTH_INFO + userId, JSON.stringify(authInfo));
+		if (!authInfo || !Array.isArray(authInfo.tokens) || !token) return;
+		authInfo.tokens = authInfo.tokens.filter(item => item !== token);
+		if (authInfo.tokens.length === 0) {
+			await c.env.kv.delete(KvConst.AUTH_INFO + userId);
+			return;
+		}
+		await c.env.kv.put(
+			KvConst.AUTH_INFO + userId,
+			JSON.stringify(authInfo),
+			{ expirationTtl: constant.TOKEN_EXPIRE }
+		);
 	}
 
 };

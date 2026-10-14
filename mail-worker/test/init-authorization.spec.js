@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { constantTimeEqual, isAuthorizedInitRequest } from '../src/init/init';
+import { describe, expect, it, vi } from 'vitest';
+import {
+	constantTimeEqual,
+	isAuthorizedInitRequest,
+	runIdempotentSchemaStatements,
+} from '../src/init/init';
 
 function context(secret, authorization) {
 	return {
@@ -24,5 +28,39 @@ describe('database initialization authorization', () => {
 	it('compares values without accepting unequal lengths', () => {
 		expect(constantTimeEqual('same-value', 'same-value')).toBe(true);
 		expect(constantTimeEqual('same-value', 'same-value-longer')).toBe(false);
+	});
+
+	it('skips only expected duplicate schema errors', async () => {
+		const runs = [];
+		const c = {
+			env: {
+				db: {
+					prepare: statement => ({
+						run: async () => {
+							runs.push(statement);
+							if (statement === 'duplicate') throw new Error('duplicate column name: example');
+						},
+					}),
+				},
+			},
+		};
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+		await runIdempotentSchemaStatements(c, ['duplicate', 'next']);
+
+		expect(runs).toEqual(['duplicate', 'next']);
+		info.mockRestore();
+	});
+
+	it('fails closed on operational migration errors', async () => {
+		const c = {
+			env: {
+				db: {
+					prepare: () => ({ run: async () => { throw new Error('database unavailable'); } }),
+				},
+			},
+		};
+
+		await expect(runIdempotentSchemaStatements(c, ['statement'])).rejects.toThrow('database unavailable');
 	});
 });

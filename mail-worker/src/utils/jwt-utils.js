@@ -1,6 +1,14 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+function signingSecret(c) {
+	const secret = String(c?.env?.jwt_secret || '');
+	if (!/^[A-Za-z0-9_-]{32,}$/.test(secret)) {
+		throw new Error('JWT signing secret is not configured securely');
+	}
+	return secret;
+}
+
 const base64url = (input) => {
 	const str = btoa(String.fromCharCode(...new Uint8Array(input)));
 	return str.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -10,6 +18,14 @@ const base64urlDecode = (str) => {
 	str = str.replace(/-/g, '+').replace(/_/g, '/');
 	while (str.length % 4) str += '=';
 	return Uint8Array.from(atob(str), c => c.charCodeAt(0));
+};
+
+const isCanonicalBase64url = (value) => {
+	try {
+		return base64url(base64urlDecode(value)) === value;
+	} catch {
+		return false;
+	}
 };
 
 const jwtUtils = {
@@ -34,7 +50,7 @@ const jwtUtils = {
 
 		const key = await crypto.subtle.importKey(
 			'raw',
-			encoder.encode(c.env.jwt_secret),
+			encoder.encode(signingSecret(c)),
 			{ name: 'HMAC', hash: 'SHA-256' },
 			false,
 			['sign']
@@ -48,14 +64,20 @@ const jwtUtils = {
 
 	async verifyToken(c, token) {
 		try {
-			const [headerB64, payloadB64, signatureB64] = token.split('.');
+			if (typeof token !== 'string' || token.length > 4096) return null;
+			const segments = token.split('.');
+			if (segments.length !== 3 || segments.some(segment => !/^[A-Za-z0-9_-]+$/.test(segment))) return null;
+			if (segments.some(segment => !isCanonicalBase64url(segment))) return null;
+			const [headerB64, payloadB64, signatureB64] = segments;
 
 			if (!headerB64 || !payloadB64 || !signatureB64) return null;
+			const header = JSON.parse(decoder.decode(base64urlDecode(headerB64)));
+			if (header?.alg !== 'HS256' || header?.typ !== 'JWT') return null;
 
 			const data = `${headerB64}.${payloadB64}`;
 			const key = await crypto.subtle.importKey(
 				'raw',
-				encoder.encode(c.env.jwt_secret),
+				encoder.encode(signingSecret(c)),
 				{ name: 'HMAC', hash: 'SHA-256' },
 				false,
 				['verify']
@@ -72,17 +94,20 @@ const jwtUtils = {
 
 			const payloadJson = decoder.decode(base64urlDecode(payloadB64));
 			const payload = JSON.parse(payloadJson);
+			if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+			if (!Number.isSafeInteger(payload.userId) || typeof payload.token !== 'string' || !payload.token) return null;
 
 			const now = Math.floor(Date.now() / 1000);
-			if (payload.exp && payload.exp < now) return null;
+			if (payload.exp !== undefined && (!Number.isSafeInteger(payload.exp) || payload.exp < now)) return null;
+			if (payload.iat !== undefined && (!Number.isSafeInteger(payload.iat) || payload.iat > now + 60)) return null;
 
 			return payload;
 
-		} catch (err) {
-			console.log(err)
+		} catch {
 			return null;
 		}
 	}
 };
 
+export { base64url, base64urlDecode, isCanonicalBase64url, signingSecret };
 export default jwtUtils;

@@ -249,11 +249,9 @@ window.onTurnstileError = (e) => {
 };
 
 window.loadAfter = (e) => {
-  console.log('loadAfter')
 }
 
 window.loadBefore = (e) => {
-  console.log('loadBefore')
 }
 
 const loginOpacity = computed(() => {
@@ -482,7 +480,6 @@ function submitRegister() {
     return
   }
 
-  console.log(registerForm.email)
 
   if (getEmailName(registerForm.email).length < settingStore.settings.minEmailPrefix) {
     ElMessage({

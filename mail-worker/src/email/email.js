@@ -5,8 +5,9 @@ import settingService from '../service/setting-service';
 import attService from '../service/att-service';
 import constant from '../const/constant';
 import fileUtils from '../utils/file-utils';
-import { emailConst, isDel, settingConst } from '../const/entity-const';
+import { emailConst, isDel, settingConst, userConst } from '../const/entity-const';
 import emailUtils from '../utils/email-utils';
+import verifyUtils from '../utils/verify-utils';
 import roleService from '../service/role-service';
 import userService from '../service/user-service';
 import telegramService from '../service/telegram-service';
@@ -43,16 +44,14 @@ export async function email(message, env, ctx) {
 			return;
 		}
 
-		const reader = message.raw.getReader();
-		let content = '';
-
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			content += new TextDecoder().decode(value);
+		// PostalMime accepts the raw ReadableStream directly. Passing the stream
+		// preserves byte boundaries and avoids corrupting UTF-8 characters that
+		// happen to be split across chunks.
+		const email = await PostalMime.parse(message.raw);
+		if (!verifyUtils.isEmail(email.from?.address)) {
+			message.setReject('Invalid sender');
+			return;
 		}
-
-		const email = await PostalMime.parse(content);
 
 
 		const blockFlag = checkBlock(blackSubject, blackContent, blackFrom, email);
@@ -71,15 +70,25 @@ export async function email(message, env, ctx) {
 			}
 		}
 
+		if (account?.isDel === isDel.DELETE) {
+			message.setReject('Recipient not found');
+			return;
+		}
+
 		if (!account && noRecipient === settingConst.noRecipient.CLOSE) {
 			message.setReject('Recipient not found');
 			return;
 		}
 
-		let userRow = {}
+		let userRow = null
 
 		if (account) {
 			 userRow = await userService.selectByIdIncludeDel({ env: env }, account.userId);
+		}
+
+		if (account && (!userRow || userRow.isDel === isDel.DELETE || userRow.status === userConst.status.BAN)) {
+			message.setReject('Recipient unavailable');
+			return;
 		}
 
 		if (account && userRow.email !== env.admin) {
@@ -103,7 +112,7 @@ export async function email(message, env, ctx) {
 			email.to = [{ address: message.to, name: emailUtils.getName(message.to)}]
 		}
 
-		const toName = email.to.find(item => item.address === message.to)?.name || '';
+		const toName = email.to.find(item => item.address?.toLowerCase() === message.to.toLowerCase())?.name || '';
 		const code = await aiService.extractCode({ env }, email, { aiCode, aiCodeFilter });
 
 		const params = {

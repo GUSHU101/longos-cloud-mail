@@ -20,6 +20,7 @@ import {oauth} from "../entity/oauth";
 import oauthService from "./oauth-service";
 import settingService from './setting-service';
 import starService from './star-service';
+import verifyUtils from '../utils/verify-utils';
 
 const userService = {
 
@@ -58,13 +59,18 @@ const userService = {
 
 	async resetPassword(c, params, userId) {
 
-		const { password } = params;
+		const password = params?.password;
 
-		if (password.length < 6) {
+		if (typeof password !== 'string' || password.length < 6) {
 			throw new BizError(t('pwdMinLength'));
 		}
+		if (password.length > 30) throw new BizError(t('pwdLengthLimit'));
 		const { salt, hash } = await cryptoUtils.hashPassword(password);
 		await orm(c).update(user).set({ password: hash, salt: salt }).where(eq(user.userId, userId)).run();
+	},
+
+	async updatePasswordHash(c, userId, password, salt) {
+		await orm(c).update(user).set({ password, salt }).where(eq(user.userId, userId)).run();
 	},
 
 	selectByEmail(c, email) {
@@ -116,25 +122,16 @@ const userService = {
 		await orm(c).delete(user).where(inArray(user.userId, userIds)).run();
 	},
 
-	async list(c, params) {
+	async list(c, params = {}) {
 
 		let { num, size, email, timeSort, status } = params;
 
-		size = Number(size);
-		num = Number(num);
+		size = Number.isSafeInteger(Number(size)) ? Math.min(50, Math.max(1, Number(size))) : 50;
+		num = Number.isSafeInteger(Number(num)) ? Math.min(1_000_000, Math.max(1, Number(num))) : 1;
 		timeSort = Number(timeSort);
 		params.isDel = Number(params.isDel);
-
-		if (isNaN(size)) {
-			size = 50;
-		}
-
-		if (isNaN(num)) {
-			num = 1;
-		}
-
-		if (size > 50) {
-			size = 50;
+		if (email !== undefined && (typeof email !== 'string' || email.length > 320)) {
+			throw new BizError(t('notEmail'));
 		}
 
 		num = (num - 1) * size;
@@ -158,7 +155,21 @@ const userService = {
 
 
 		const query = orm(c).select({
-			...user,
+			userId: user.userId,
+			email: user.email,
+			type: user.type,
+			status: user.status,
+			createTime: user.createTime,
+			activeTime: user.activeTime,
+			createIp: user.createIp,
+			activeIp: user.activeIp,
+			os: user.os,
+			browser: user.browser,
+			device: user.device,
+			sort: user.sort,
+			sendCount: user.sendCount,
+			regKeyId: user.regKeyId,
+			isDel: user.isDel,
 			username: oauth.username,
 			trustLevel: oauth.trustLevel,
 			avatar: oauth.avatar,
@@ -323,15 +334,21 @@ const userService = {
 
 	async add(c, params) {
 
-		let { email, type, password } = params;
+		let { email, type, password } = params || {};
+		email = emailUtils.normalizeAddress(email);
 
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+		if (!verifyUtils.isEmail(email)) {
+			throw new BizError(t('notEmail'));
+		}
+
+		if (!emailUtils.isAllowedDomain(email, c.env.domain)) {
 			throw new BizError(t('notEmailDomain'));
 		}
 
-		if (password.length < 6) {
+		if (typeof password !== 'string' || password.length < 6) {
 			throw new BizError(t('pwdMinLength'));
 		}
+		if (password.length > 30) throw new BizError(t('pwdLengthLimit'));
 
 		const accountRow = await accountService.selectByEmailIncludeDel(c, email);
 

@@ -1,9 +1,14 @@
 import { UAParser } from 'ua-parser-js';
+
+function boundedText(value, maximumLength = 255) {
+	return String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, maximumLength);
+}
+
 const reqUtils = {
 	getIp(c) {
-		return  c.req.header('CF-Connecting-IP') ||
-			c.req.header('X-Forwarded-For') ||
-			'Unknown';
+		const cloudflareIp = c.req.header('CF-Connecting-IP');
+		const forwardedIp = String(c.req.header('X-Forwarded-For') || '').split(',')[0].trim();
+		return boundedText(cloudflareIp || forwardedIp || 'Unknown', 64);
 	},
 
 	getUserAgent(c) {
@@ -38,8 +43,13 @@ const reqUtils = {
 			deviceInfo = (namePart + typePart).trim();
 		}
 
-		return {browser: browserInfo || '', device: deviceInfo || '', os: osInfo || ''}
+		return {
+			browser: boundedText(browserInfo),
+			device: boundedText(deviceInfo),
+			os: boundedText(osInfo),
+		}
 	}
 }
 
+export { boundedText };
 export default reqUtils

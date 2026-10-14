@@ -1,6 +1,31 @@
 import { parseHTML } from 'linkedom';
 
 const emailUtils = {
+	normalizeAddress(email) {
+		return typeof email === 'string' ? email.trim().toLowerCase() : '';
+	},
+
+	configuredDomains(value) {
+		if (Array.isArray(value)) {
+			return value.map(item => String(item).trim().toLowerCase()).filter(Boolean);
+		}
+		if (typeof value !== 'string' || !value.trim()) return [];
+		const input = value.trim();
+		if (input.startsWith('[')) {
+			try {
+				const parsed = JSON.parse(input);
+				if (Array.isArray(parsed)) return this.configuredDomains(parsed);
+			} catch {
+				return [];
+			}
+		}
+		return input.split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+	},
+
+	isAllowedDomain(email, configuredDomains) {
+		const domain = this.getDomain(this.normalizeAddress(email)).toLowerCase();
+		return !!domain && this.configuredDomains(configuredDomains).includes(domain);
+	},
 
 	getDomain(email) {
 		if (typeof email !== 'string') return '';

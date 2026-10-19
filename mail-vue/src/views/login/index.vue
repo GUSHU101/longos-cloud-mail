@@ -184,10 +184,10 @@ const show = ref('login')
 const oauthKeys = ['linuxdo', 'github', 'google']
 
 const oauthProvider = computed(() => {
-  const fromState = route.query.state
-  if (oauthKeys.includes(fromState)) return fromState
-  const fromStore = sessionStorage.getItem('oauthProvider')
-  return oauthKeys.includes(fromStore) ? fromStore : null
+	const provider = sessionStorage.getItem('oauthProvider')
+	const expectedState = sessionStorage.getItem('oauthState')
+	if (!oauthKeys.includes(provider) || !expectedState || route.query.state !== expectedState) return null
+	return provider
 })
 
 const oauthProviders = computed(() => {
@@ -201,7 +201,7 @@ const oauthProviders = computed(() => {
 
 const bindForm = reactive({
   email: '',
-  oauthUserId: '',
+	bindToken: '',
   code: ''
 })
 
@@ -286,11 +286,13 @@ const getEmailName = (email) => {
 function oauthLogin(provider) {
   const clientId = settingStore.settings[provider + 'ClientId']
   const redirectUri = encodeURIComponent(window.location.origin + '/login')
+	const state = `${provider}:${crypto.randomUUID()}`
   sessionStorage.setItem('oauthProvider', provider)
+	sessionStorage.setItem('oauthState', state)
   const authorizeUrls = {
-    linuxdo: `https://connect.linux.do/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${provider}`,
-    github: `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=user:email&state=${provider}`,
-    google: `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${provider}`,
+	linuxdo: `https://connect.linux.do/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${encodeURIComponent(state)}`,
+	github: `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=user:email&state=${encodeURIComponent(state)}`,
+	google: `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${encodeURIComponent(state)}`,
   }
   window.location.href = authorizeUrls[provider]
 }
@@ -307,16 +309,24 @@ async function oauthGetUser() {
 
   const params = new URLSearchParams(window.location.search)
   const code = params.get('code')
-  if (!code || !oauthProvider.value) return
+	if (!code) return
+	if (!oauthProvider.value) {
+		sessionStorage.removeItem('oauthProvider')
+		sessionStorage.removeItem('oauthState')
+		window.history.replaceState({}, '', window.location.origin + window.location.pathname)
+		ElMessage({ message: 'OAuth 登录状态无效或已过期，请重试', type: 'error', plain: true })
+		return
+	}
 
   const provider = oauthProvider.value
   oauthLoading.value = true
   sessionStorage.removeItem('oauthProvider')
+	sessionStorage.removeItem('oauthState')
   window.history.replaceState({}, '', window.location.origin + window.location.pathname)
 
   loginFns[provider](code, window.location.origin + '/login').then(data => {
 
-    bindForm.oauthUserId = data.userInfo.oauthUserId;
+	bindForm.bindToken = data.bindToken || '';
 
     if (!data.token) {
       showBindForm.value = true
@@ -385,7 +395,7 @@ function bind() {
 
   }
 
-  const form = {email, oauthUserId: bindForm.oauthUserId, code: bindForm.code}
+	const form = {email, bindToken: bindForm.bindToken, code: bindForm.code}
 
   bindLoading.value = true
   oauthBindUser(form).then(data => {

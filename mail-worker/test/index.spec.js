@@ -1,20 +1,19 @@
-import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
-import worker from '../src';
+import { describe, expect, it } from 'vitest';
+import { withSecurityHeaders } from '../src/index';
 
-describe('Hello World worker', () => {
-	it('responds with Hello World! (unit style)', async () => {
-		const request = new Request('http://example.com');
-		// Create an empty context to pass to `worker.fetch()`.
-		const ctx = createExecutionContext();
-		const response = await worker.fetch(request, env, ctx);
-		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
-		await waitOnExecutionContext(ctx);
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
-	});
+describe('asset response hardening', () => {
+	it('preserves the response while adding browser security headers', async () => {
+		const response = withSecurityHeaders(new Response('asset', {
+			status: 206,
+			headers: { 'content-type': 'text/plain', 'accept-ranges': 'bytes' },
+		}));
 
-	it('responds with Hello World! (integration style)', async () => {
-		const response = await SELF.fetch('http://example.com');
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+		expect(response.status).toBe(206);
+		expect(response.headers.get('accept-ranges')).toBe('bytes');
+		expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(response.headers.get('x-frame-options')).toBe('DENY');
+		expect(response.headers.get('content-security-policy')).toContain("object-src 'none'");
+		expect(response.headers.get('content-security-policy')).toContain('https://challenges.cloudflare.com');
+		expect(await response.text()).toBe('asset');
 	});
 });

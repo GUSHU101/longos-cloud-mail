@@ -32,7 +32,7 @@
 ## Description
 With only one domain, you can create multiple different email addresses, similar to major email platforms. This project can be deployed on Cloudflare Workers to reduce server costs and build your own email service.
 
-This distribution retains the upstream license and attribution for [maillab/cloud-mail](https://github.com/maillab/cloud-mail) and adds the LONGOS self-hosted mail engine. Its canonical repository is [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail). Current stable release: **v4.2.0**.
+This distribution retains the upstream license and attribution for [maillab/cloud-mail](https://github.com/maillab/cloud-mail) and adds the LONGOS self-hosted mail engine. Its canonical repository is [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail). Current version: **v4.4.0**.
 ## Project Showcase
 
 - [Live Demo](https://skymail.ink)<br>
@@ -93,15 +93,19 @@ This distribution retains the upstream license and attribution for [maillab/clou
 
 ## Integrated LONGOS self-hosted sending
 
-When Cloud Mail is paired with LONGOS, LONGOS `./install.sh` builds and starts Postfix/OpenDKIM together with the website. There is no second relay deployment. The Worker submits HMAC-signed requests to `https://your-longos-site/_longos/mail-relay`.
+When Cloud Mail is paired with LONGOS, a Git-based Coolify Raw Compose deployment starts the website, database, workers, scheduler, and Postfix/OpenDKIM together behind Coolify's integrated Caddy. There is no second relay deployment. The Worker presents a scoped integration token only to `https://your-control-domain/_longos/mail-relay`; LONGOS validates the tenant sender before translating the request to private-network HMAC authentication.
 
 For the exact Cloudflare Account, API Token, D1/KV/R2, GitHub Actions, custom-domain, Email Routing, initialization, upgrade, and rollback procedure, follow the [complete Cloudflare Workers deployment guide](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md).
 
-Set `LONGOS_RELAY_URL` and save LONGOS's `CLOUD_MAIL_RELAY_SHARED_SECRET` as `RELAY_SHARED_SECRET` in this repository's GitHub Actions settings, then manually run `Deploy cloud-mail to Cloudflare Workers` from `main`. The deployment workflow installs the Worker secret automatically and Auto mode prefers the LONGOS engine. Keep Cloudflare Git Builds disabled so two deployment systems cannot overwrite the same Worker. LONGOS and Cloud Mail use separate signing keys. Standalone Cloud Mail deployments can still use the generic [`mail-relay`](./mail-relay/README.md) procedure.
+For a first deployment, start with the [one-command Cloud Mail + LONGOS quick start](./doc/QUICK_START.md): copy `.cloud-mail.deploy.env.example`, fill the values, and run `node scripts/deploy-cloudflare.mjs`. The tool tests and builds the application, creates or reuses D1/KV/R2, verifies the LONGOS gateway, deploys the Worker, writes secrets, and initializes the database.
+
+Create one Cloud Mail credential on the LONGOS control site, then configure `LONGOS_RELAY_URL` and the `LONGOS_INTEGRATION_TOKEN` secret in this repository's GitHub Actions settings before running `Deploy cloud-mail to Cloudflare Workers` from `main`. That single control-site binding serves every active tenant; child sites do not create separate tokens. LONGOS resolves the tenant from the stable `+site-code` sender suffix, so storefront-domain changes do not affect mail access. LONGOS encrypts the token with `APP_KEY` so administrators can reveal it later while authentication still uses its hash. Reveal operations are rate-limited and record their latest time and count. The deployment installs the credential as a Worker secret; it is never stored in the Cloud Mail browser UI or D1. Auto mode prefers the LONGOS engine. `RELAY_SHARED_SECRET` remains only as a compatibility path for standalone or older HMAC relays.
+
+Tenant administrators can change the default and purpose-specific sender addresses. For a domain change, the new sender domain must be signed in the relay through both `MAIL_RELAY_DOMAINS` and `MAIL_RELAY_ALLOWED_SENDER_DOMAINS`, and the LONGOS control-site administrator must assign it uniquely to that tenant. The website host and mail From domain are independent: a `www.example.com` store may send as `orders@example.com`. The mail settings page shows only the intersection of relay-signed and tenant-assigned domains. Switching the sender does not create or replace the single control-site integration token.
 
 The `From` identity always comes from the Cloud Mail account selected by the user. The Worker verifies that the account belongs to that user and that its domain is allowed by the assigned role; the LONGOS relay does not replace it with a platform-wide default address.
 
-Self-hosting still requires a static public IP, configurable PTR/rDNS, and outbound TCP port 25. The shared secret is stored only in LONGOS server configuration, GitHub Secrets, and the Cloudflare Worker secret, never in the browser or D1.
+Self-hosting still requires a static public IP, configurable PTR/rDNS, and outbound TCP port 25. LONGOS encrypts the integration token with `APP_KEY` for later retrieval and uses its hash for authentication; the token is also stored in GitHub Secrets and the Cloudflare Worker secret. Internal HMAC credentials remain only on the LONGOS server; neither credential is stored in the browser or D1.
 
 ## Project Structure
 

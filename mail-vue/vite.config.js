@@ -41,9 +41,11 @@ export default defineConfig(({mode}) => {
             }),
             AutoImport({
                 resolvers: [ElementPlusResolver()],
+                dts: false,
             }),
             Components({
                 resolvers: [ElementPlusResolver()],
+                dts: false,
             })
         ],
         resolve: {
@@ -53,9 +55,22 @@ export default defineConfig(({mode}) => {
         },
         build: {
             target: 'es2022',
+			chunkSizeWarningLimit: 600,
             outDir: env.VITE_OUT_DIR || 'dist',
             emptyOutDir: true,
-            assetsInclude: ['**/*.json']
+			assetsInclude: ['**/*.json'],
+			rollupOptions: {
+				output: {
+					manualChunks(id) {
+						if (!id.includes('node_modules')) return undefined
+						if (/node_modules[\\/](@vue|vue|pinia|vue-router|vue-i18n)[\\/]/.test(id)) return 'vue-vendor'
+						if (id.includes('node_modules/echarts') || id.includes('node_modules\\echarts')) return 'charts'
+						if (id.includes('node_modules/dexie') || id.includes('node_modules\\dexie')) return 'database'
+						if (id.includes('node_modules/@iconify') || id.includes('node_modules\\@iconify')) return 'icons'
+						return undefined
+					}
+				}
+			}
         }
     }
 })

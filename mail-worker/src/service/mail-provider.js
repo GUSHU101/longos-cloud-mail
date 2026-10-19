@@ -1,7 +1,7 @@
 export function selectExternalMailProvider({
 	mailEngine,
 	relayUrl,
-	hasRelaySecret,
+	hasRelayCredential,
 	useCloudflareEmail,
 	hasResendToken,
 }) {
@@ -9,7 +9,7 @@ export function selectExternalMailProvider({
 		return mailEngine;
 	}
 
-	if (relayUrl && hasRelaySecret) {
+	if (relayUrl && hasRelayCredential) {
 		return 'self_hosted';
 	}
 

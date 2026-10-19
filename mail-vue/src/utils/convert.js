@@ -2,10 +2,10 @@ import {useSettingStore} from "@/store/setting.js";
 export function cvtR2Url(key) {
 
     if (!key) {
-        return + 'https://' + ''
+        return ''
     }
 
-    if (key.startsWith('https://')) {
+    if (/^https:\/\//i.test(key)) {
         return key
     }
 
@@ -17,7 +17,7 @@ export function cvtR2Url(key) {
         return key;
     }
 
-    if (!domain.startsWith('http')) {
+    if (!/^https?:\/\//i.test(domain)) {
         return 'https://' + domain + '/' + key
     }
 
@@ -33,7 +33,7 @@ export function toOssDomain(domain) {
         return ''
     }
 
-    if (!domain.startsWith('http')) {
+    if (!/^https?:\/\//i.test(domain)) {
         return 'https://' + domain
     }
 

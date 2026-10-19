@@ -8,6 +8,10 @@ export function settingQuery() {
     return http.get('/setting/query')
 }
 
+export function relayHealth() {
+    return http.get('/setting/relayHealth')
+}
+
 export function websiteConfig() {
     return http.get('/setting/websiteConfig')
 }

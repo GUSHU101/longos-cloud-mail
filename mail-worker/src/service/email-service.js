@@ -358,7 +358,7 @@ const emailService = {
 			selectedProvider = selectExternalMailProvider({
 				mailEngine,
 				relayUrl,
-				hasRelaySecret: !!c.env.RELAY_SHARED_SECRET,
+				hasRelayCredential: !!(c.env.LONGOS_INTEGRATION_TOKEN || c.env.RELAY_SHARED_SECRET),
 				useCloudflareEmail,
 				hasResendToken: !!resendToken,
 			});
@@ -369,7 +369,7 @@ const emailService = {
 			if (selectedProvider === 'resend' && !resendToken) {
 				throw new BizError(t('noResendToken'));
 			}
-			if (selectedProvider === 'self_hosted' && (!relayUrl || !c.env.RELAY_SHARED_SECRET)) {
+			if (selectedProvider === 'self_hosted' && (!relayUrl || !(c.env.LONGOS_INTEGRATION_TOKEN || c.env.RELAY_SHARED_SECRET))) {
 				throw new BizError(t('noSelfHostedRelay'));
 			}
 			if (!selectedProvider) {
@@ -948,10 +948,31 @@ const emailService = {
 
 	updateEmailStatus(c, params) {
 		const { status, resendEmailId, message } = params;
+		const conditions = [
+			eq(email.resendEmailId, resendEmailId),
+			eq(email.provider, 'resend'),
+			eq(email.type, emailConst.type.SEND),
+		];
+		if ([emailConst.status.SENT, emailConst.status.DELAYED].includes(status)) {
+			conditions.push(notInArray(email.status, [
+				emailConst.status.DELIVERED,
+				emailConst.status.BOUNCED,
+				emailConst.status.COMPLAINED,
+				emailConst.status.FAILED,
+			]));
+		} else if (status === emailConst.status.DELIVERED) {
+			conditions.push(notInArray(email.status, [
+				emailConst.status.BOUNCED,
+				emailConst.status.COMPLAINED,
+				emailConst.status.FAILED,
+			]));
+		} else if ([emailConst.status.BOUNCED, emailConst.status.FAILED].includes(status)) {
+			conditions.push(ne(email.status, emailConst.status.COMPLAINED));
+		}
 		return orm(c).update(email).set({
 			status: status,
 			message: message
-		}).where(eq(email.resendEmailId, resendEmailId)).returning().get();
+		}).where(and(...conditions)).returning().get();
 	},
 
 	async selectUserEmailCountList(c, userIds, type, del = isDel.NORMAL) {
@@ -1140,7 +1161,8 @@ const emailService = {
 
 		const batchSize = 95;
 
-		while (true) {
+		const maxBatchesPerRun = 10;
+		for (let batch = 0; batch < maxBatchesPerRun; batch += 1) {
 			const conditions = [lt(email.createTime, cutoff)];
 			if (excludeUserIds.length) {
 				conditions.push(notInArray(email.userId, excludeUserIds));

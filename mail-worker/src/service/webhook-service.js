@@ -1,19 +1,27 @@
-import domainUtils from '../utils/domain-uitls';
+import { normalizeWebhookUrl } from '../utils/domain-uitls';
+
+const MAX_WEBHOOK_ATTEMPTS = 4;
+const WEBHOOK_TIMEOUT_MS = 10_000;
 
 const webhookService = {
 
 	async sendEmail(c, emailRow, webhookUrl, retry = 0, webhookSecret) {
 
-		webhookUrl = domainUtils.toOssDomain(webhookUrl);
-
+		try {
+			webhookUrl = normalizeWebhookUrl(webhookUrl);
+		} catch (error) {
+			console.error(`Webhook 配置无效: ${error.message}`);
+			return;
+		}
 		if (!webhookUrl) {
 			return;
 		}
 
 		retry = Number(retry);
-		if (isNaN(retry) || retry < 0) {
+		if (!Number.isSafeInteger(retry) || retry < 0) {
 			retry = 0;
 		}
+		retry = Math.min(retry, MAX_WEBHOOK_ATTEMPTS - 1);
 
 		const headers = {
 			'Content-Type': 'application/json'
@@ -43,14 +51,15 @@ const webhookService = {
 				const res = await fetch(webhookUrl, {
 					method: 'POST',
 					headers,
-					body
+					body,
+					signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
 				});
 
 				if (res.ok) {
 					return;
 				}
 
-				lastError = `status: ${res.status} response: ${await res.text()}`;
+				lastError = `status: ${res.status}`;
 			} catch (e) {
 				lastError = e.message;
 			}
@@ -61,4 +70,5 @@ const webhookService = {
 
 };
 
+export { MAX_WEBHOOK_ATTEMPTS, WEBHOOK_TIMEOUT_MS };
 export default webhookService;

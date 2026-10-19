@@ -85,7 +85,42 @@ test('rejects malformed header and body value types as client errors', () => {
   );
   assert.throws(
     () => normalizeMessage({ ...base, text: 42 }),
-    error => error.status === 400 && error.message === 'Message text or HTML is required',
+    error => error.status === 400 && error.message === 'Message text must be a string',
+  );
+  assert.throws(
+    () => normalizeMessage({ ...base, subject: { unexpected: true }, text: 'Body' }),
+    error => error.status === 400 && error.message === 'Invalid subject',
+  );
+  assert.throws(
+    () => normalizeMessage({ ...base, text: 'Body', headers: { references: { unexpected: true } } }),
+    error => error.status === 400 && error.message === 'Invalid references',
+  );
+  assert.throws(
+    () => normalizeMessage({
+      ...base,
+      text: 'Body',
+      attachments: [{ filename: { unexpected: true }, content: 'YQ==' }],
+    }),
+    error => error.status === 400 && error.message === 'Invalid filename',
+  );
+  assert.throws(
+    () => normalizeMessage({
+      ...base,
+      text: 'Body',
+      attachments: [{ filename: 'bad.txt', content: 'YQ===' }],
+    }),
+    error => error.status === 400 && /Invalid base64 attachment/.test(error.message),
+  );
+  assert.throws(
+    () => normalizeMessage({
+      ...base,
+      text: 'Body',
+      attachments: Array.from({ length: 26 }, (_, index) => ({
+        filename: `empty-${index}.txt`,
+        content: '',
+      })),
+    }),
+    error => error.status === 400 && /Attachment count/.test(error.message),
   );
 });
 

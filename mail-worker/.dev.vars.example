@@ -1,0 +1,10 @@
+# Copy this file to .dev.vars for local development. Never commit .dev.vars.
+jwt_secret=replace-with-at-least-32-url-safe-random-characters
+INIT_SECRET=use-a-different-at-least-32-character-secret
+
+# Optional mail integrations:
+# Preferred for LONGOS: create this under System Integration Tokens.
+# LONGOS_INTEGRATION_TOKEN=longos_it_replace-with-the-token-from-longos
+# Compatibility for standalone/older HMAC relays only:
+# RELAY_SHARED_SECRET=replace-with-the-relay-client-secret
+# RESEND_WEBHOOK_SECRET=whsec_replace-with-resend-signing-secret

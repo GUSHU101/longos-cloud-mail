@@ -14,6 +14,7 @@ import { isDel, roleConst } from '../const/entity-const';
 import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
+import authRateLimitService from './auth-rate-limit-service';
 
 const MAX_PUBLIC_PAGE_SIZE = 100;
 const MAX_PUBLIC_BATCH_USERS = 20;
@@ -225,20 +226,25 @@ const publicService = {
 		const email = emailUtils.normalizeAddress(params?.email);
 		const password = params?.password;
 		const admin = emailUtils.normalizeAddress(c.env.admin);
+		await authRateLimitService.assertAllowed(c, `public:${email}`);
 
 		const userRow = await userService.selectByEmailIncludeDel(c, email);
 
 		if (email !== admin) {
+			await authRateLimitService.recordFailure(c, `public:${email}`);
 			throw new BizError(t('notAdmin'));
 		}
 
 		if (!userRow || userRow.isDel === isDel.DELETE) {
+			await authRateLimitService.recordFailure(c, `public:${email}`);
 			throw new BizError(t('notExistUser'));
 		}
 
 		if (typeof password !== 'string' || !await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password)) {
+			await authRateLimitService.recordFailure(c, `public:${email}`);
 			throw new BizError(t('IncorrectPwd'));
 		}
+		await authRateLimitService.clear(c, `public:${email}`);
 
 		if (cryptoUtils.needsRehash(userRow.password)) {
 			const { salt, hash } = await cryptoUtils.hashPassword(password);

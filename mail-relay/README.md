@@ -12,7 +12,7 @@
 
 ## 部署
 
-如果你使用 LONGOS，无需执行本节：LONGOS 的 `./install.sh` 已把相同组件并入网站 Docker Compose，并通过 `/_longos/mail-relay` 提供 HTTPS 入口。本节只用于不安装 LONGOS 的独立 Cloud Mail 环境。
+如果你使用 LONGOS，无需执行本节：LONGOS 的 Coolify Raw Compose 已把相同组件并入网站栈，并通过 `/_longos/mail-relay` 提供 HTTPS 入口。本节只用于不安装 LONGOS 的独立 Cloud Mail 环境。
 
 LONGOS 用户请直接阅读[一体化自建邮件部署与升级教程](../doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)，其中包含 Cloudflare、GitHub Actions、DNS/PTR、租户发件域和升级步骤。
 
@@ -91,5 +91,7 @@ https://relay-api.example.com
 - 签名载荷包含用户/账户上下文，日志只记录租户键、账户 ID 和发件域，不记录邮件内容。
 - Postfix 仅监听容器回环地址，不能作为公网 Open Relay。
 - API 有请求体、附件、To/Cc/Bcc 总人数、单发件身份每分钟请求数、并发投递和连接数限制。
-- `/health` 使用带超时和短缓存的异步 Postfix 探测，不会因高频健康检查阻塞投递事件循环。
+- 成功提交的幂等回执会持久化到 `relay-state` 卷；容器重启后重复的 `requestId` 不会再次投递，默认保留 24 小时。
+- 中继会在调用本机 sendmail **之前**同步落盘 `pending` 意图，并在失败时写 `released`、成功时写 `accepted`；若主机在 Postfix 接收后的极小窗口内断电，重启后会把该任务标记为“状态不确定”并拒绝自动重复发信。
+- `/health` 同时检查 Postfix、OpenDKIM、持久化回执目录、幂等日志容量和 Postfix 队列深度；队列或仍有效的回执达到上限时会失败关闭并停止接收新任务，绝不会为了腾空间删除防重复记录。
 - 密钥只保存在服务器 `.env` 和 Cloudflare Worker secret 中，不能提交到 Git。

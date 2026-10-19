@@ -25,7 +25,7 @@ const en = {
 	noResendToken: 'Resend API token not configured',
 	noSendProvider: 'Email sending service is not configured',
 	noCloudflareEmailBinding: 'Cloudflare Email binding is not configured',
-	noSelfHostedRelay: 'Self-hosted relay URL or RELAY_SHARED_SECRET is not configured',
+	noSelfHostedRelay: 'Self-hosted relay URL or LONGOS_INTEGRATION_TOKEN is not configured',
 	sendEmailNotCurUser: 'Sender email does not belong to current user',
 	notExistEmailReply: 'Mail does not exist and cannot be replied to',
 	imageAttLimit: 'The maximum number of image attachments is 10',

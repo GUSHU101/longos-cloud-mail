@@ -9,6 +9,8 @@ on:
       - "mail-relay/**"
       - "mail-worker/**"
       - "mail-vue/**"
+      - "scripts/**"
+      - ".cloud-mail.deploy.env.example"
       - ".github/workflows/self-hosted-mail-engine-ci.yml"
       - ".github/workflows/deploy-cloudflare.yml"
   pull_request:
@@ -16,6 +18,8 @@ on:
       - "mail-relay/**"
       - "mail-worker/**"
       - "mail-vue/**"
+      - "scripts/**"
+      - ".cloud-mail.deploy.env.example"
       - ".github/workflows/self-hosted-mail-engine-ci.yml"
       - ".github/workflows/deploy-cloudflare.yml"
 
@@ -79,6 +83,7 @@ jobs:
           sed -i 's|${AI_MODEL}|@cf/meta/llama-3.1-8b-instruct-fast|g' wrangler-action-ci.toml
           sed -i 's|${ANALYSIS_CACHE}|false|g' wrangler-action-ci.toml
           sed -i 's|${LONGOS_RELAY_URL}|https://admin.example.com/_longos/mail-relay|g' wrangler-action-ci.toml
+          sed -i 's|"${CORS_ORIGINS}"|[]|g' wrangler-action-ci.toml
           if grep -q '\${' wrangler-action-ci.toml; then
             echo "Unresolved placeholder in rendered production configuration"
             exit 1

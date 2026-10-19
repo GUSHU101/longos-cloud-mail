@@ -1,5 +1,59 @@
 # Changelog
 
+## v4.4.0 - 2026-10-19
+
+### Deployment
+
+- Added `node scripts/deploy-cloudflare.mjs`, a cross-platform guided production deployer that installs locked dependencies, runs tests/builds, creates or reuses D1/KV/R2, verifies the LONGOS token gateway, renders an ignored Wrangler production configuration, deploys secrets, initializes D1 with certificate-aware retries, and performs a final public endpoint check.
+- Deploys code and required secrets together, removes disabled legacy/provider secrets, and revokes the single-use database initialization secret after verifying that it can no longer authorize requests.
+- Added a single-page Chinese quick start that clearly separates Cloudflare inbound routing, Cloud Mail browser delivery, and LONGOS transactional order/recovery delivery.
+- GitHub Actions now creates a missing R2 bucket, fails early when the LONGOS gateway or private mail stack is unhealthy, and retries initialization while a new Custom Domain certificate propagates.
+
+### Transactional mail reliability
+
+- Replaced success-only idempotency receipts with an fsync-backed `pending` / `accepted` / `released` journal. A crash after local Postfix acceptance now fails closed instead of automatically duplicating an order or abandoned-cart recovery email.
+- Added Postfix queue depth, OpenDKIM process, journal writability and capacity, bounded nonce storage, canonical base64, authenticated malformed-request throttling, and sender/global backpressure checks. A full live journal now fails closed instead of evicting duplicate-prevention records.
+- Exposed queue depth and uncertain-delivery counts through the authenticated health chain and expanded transient gateway retries while preserving the original request ID.
+- Added relay contract tests for LONGOS order notifications and discounted abandoned-order recovery messages.
+
+### Security and application reliability
+
+- Sanitized untrusted email previews and administrator-authored HTML notices, constrained Telegram preview content with CSP, and disabled shared caching of tokenized preview pages.
+- Added strict background-image URL/type/size validation and made replacement transactional so a failed upload no longer destroys the active background.
+- Added setting-field allowlists, bounded numeric options, public HTTPS endpoint validation, runtime domain validation, and controlled recovery from malformed stored provider configuration.
+- Added a final D1 schema/index assertion so a partially applied migration cannot be reported as a successful deployment.
+- Hardened relay startup validation, global request throttling, request header/type checks, and signing-domain consistency.
+
+## v4.3.0 - 2026-10-15
+
+### Security
+
+- Replaced OAuth binding by public provider user ID with a short-lived, single-use KV authorization ticket and an atomic D1 identity reservation.
+- Scoped OAuth identities by provider, added a unique composite index, enforced same-origin callback URLs and random browser `state`, and bounded provider requests with timeouts.
+- Added per-IP-and-identity authentication failure throttling for user login and public API-token issuance.
+- Bounded Turnstile verification requests and converted provider outages or malformed responses into controlled authentication failures.
+- Restricted browser API CORS to same-origin or an explicit allowlist, added private API security headers, and separated the automatically rotated D1 initialization secret from the JWT signing secret.
+- Blocked private, credentialed, non-HTTPS webhook destinations; masked stored OAuth, webhook, bot, S3, Turnstile, and provider credentials without overwriting unchanged values.
+- Replaced public LONGOS relay HMAC credentials with expiring, revocable `cloud-mail:send` / `cloud-mail:health` integration tokens. LONGOS uses token hashes for authentication and APP_KEY encryption for secure, administrator-requested retrieval, pins token traffic to the deployment relay URL, and disables credential-bearing redirects.
+- Added owner-scoped, rate-limited token reveal auditing, previous-key decryption with automatic re-encryption to the current APP_KEY, active-owner validation, duplicate-hash resilience, and authoritative relay audit context.
+- Made the control-site token platform-scoped: one control-domain binding now serves every active tenant, tenant identity is derived from the stable `+site-code` sender suffix, caller-supplied tenant fields are ignored, and child-domain gateway calls are rejected.
+
+### Mail reliability
+
+- Persisted successful relay idempotency receipts in a dedicated Docker volume, retained them across container restarts, and exposed storage failure through relay health checks.
+- Added attachment-count, concurrent-send, connection, request, recipient, rate, and client-secret isolation safeguards to the self-hosted relay.
+- Prevented stale Resend events from downgrading terminal delivery states and restricted status callbacks to matching Resend outbound rows.
+- Moved custom webhook delivery to the email event background context, bounded webhook retries and timeouts, and bounded scheduled cleanup work.
+- Fixed the half-hour analytics cron mismatch while preserving hourly maintenance and UTC daily resets.
+- Added an authenticated end-to-end relay health check to Cloud Mail settings, covering the Worker secret, LONGOS token gateway, and private Postfix/OpenDKIM relay.
+- Kept tenant mail access stable across storefront custom-domain changes and failed closed for unknown or suspended tenant site codes.
+
+### Deployment and quality
+
+- Removed committed development resource identifiers and secrets, added a safe `.dev.vars.example`, and made `pnpm test` local-only instead of deploying a test Worker.
+- Made GitHub deployment install and audit both locked workspaces, run Worker tests and the production Vue build, generate an independent init secret, and initialize D1 without exposing the JWT signing key.
+- Expanded Worker regression coverage from 42 to 59 tests across OAuth, CORS, response headers, outbound URL validation, integration-token pinning, secret masking, authentication throttling, relay health, and Turnstile failure handling, plus relay persistence coverage.
+
 ## v4.2.0 - 2026-10-14
 
 ### Security

@@ -19,6 +19,7 @@ import dayjs from 'dayjs';
 import { toUtc } from '../utils/date-uitil';
 import { t } from '../i18n/i18n.js';
 import verifyRecordService from './verify-record-service';
+import authRateLimitService from './auth-rate-limit-service';
 
 const loginService = {
 
@@ -206,6 +207,7 @@ const loginService = {
 
 		const email = emailUtils.normalizeAddress(params?.email);
 		const password = params?.password;
+		if (!noVerifyPwd) await authRateLimitService.assertAllowed(c, email);
 
 		if ((!email || typeof password !== 'string' || !password) && !noVerifyPwd) {
 			throw new BizError(t('emailAndPwdEmpty'));
@@ -214,6 +216,7 @@ const loginService = {
 		const userRow = await userService.selectByEmailIncludeDel(c, email);
 
 		if (!userRow) {
+			if (!noVerifyPwd) await authRateLimitService.recordFailure(c, email);
 			throw new BizError(t('notExistUser'));
 		}
 
@@ -227,8 +230,10 @@ const loginService = {
 
 		const passwordValid = noVerifyPwd || await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password);
 		if (!passwordValid) {
+			await authRateLimitService.recordFailure(c, email);
 			throw new BizError(t('IncorrectPwd'));
 		}
+		if (!noVerifyPwd) await authRateLimitService.clear(c, email);
 
 		if (!noVerifyPwd && cryptoUtils.needsRehash(userRow.password)) {
 			const { salt, hash } = await cryptoUtils.hashPassword(password);

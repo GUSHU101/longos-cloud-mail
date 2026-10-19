@@ -341,7 +341,6 @@ async function sendEmail() {
 
   percentMessage = ElMessage({
     message: () => h(sendPercent, {value: percent.value, desc: t('sending')}),
-    dangerouslyUseHTMLString: true,
     plain: true,
     duration: 0,
     customClass: 'message-bottom'

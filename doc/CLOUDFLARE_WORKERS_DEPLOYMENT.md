@@ -2,7 +2,7 @@
 
 本文面向第一次部署 Cloud Mail 的用户，覆盖 Cloudflare 账户准备、D1、KV、R2、Worker、自定义域名、Email Routing、GitHub Actions、首次初始化、升级、备份、回滚和常见故障。
 
-推荐使用仓库内置的 GitHub Actions 工作流。它会构建前端、校验配置、创建或复用 D1/KV、部署 Worker、写入 Secret，并调用受保护的初始化接口。手动 Wrangler 部署仅用于无法使用 GitHub Actions 或需要本地排障的场景。
+第一次部署优先使用仓库内置的跨平台引导工具：复制 `.cloud-mail.deploy.env.example` 后运行 `node scripts/deploy-cloudflare.mjs`。它会构建前端、校验配置、创建或复用 D1/KV/R2、验证 LONGOS 网关、部署 Worker、写入 Secret，并调用受保护的初始化接口。只想看必须步骤时先阅读[最短部署流程](./QUICK_START.md)。GitHub Actions 仍适合团队持续部署；手工拼 Wrangler 配置只用于排障。
 
 > Cloudflare Workers 不是完整 SMTP 服务器。Cloudflare Email Routing 负责把入站邮件交给 Worker；出站发信需要 Cloudflare Email、Resend 或 LONGOS/自建中继。若选择 LONGOS 自建发信，还需继续阅读 [Cloud Mail + LONGOS 一体化自建邮件部署与升级](./LONGOS_SELF_HOSTED_DEPLOYMENT.md)。
 
@@ -97,15 +97,9 @@
 - Cloudflare Dashboard → Storage & Databases → KV → 选择 Namespace，复制 Namespace ID；
 - `D1_DATABASE_NAME` 必须与 `D1_DATABASE_ID` 对应数据库的真实名称一致。
 
-### 5.2 R2：需要附件时先手动创建
+### 5.2 R2：由部署工具或工作流自动创建
 
-当前工作流不会自动创建 R2 桶。需要附件功能时：
-
-1. Cloudflare Dashboard → R2 Object Storage；
-2. 首次使用时完成 R2 开通；
-3. 点击 **Create bucket**；
-4. 输入例如 `cloud-mail-attachments`；
-5. 把完全相同的名称保存为 GitHub Variable `R2_BUCKET_NAME`。
+填写 `R2_BUCKET_NAME` 后，引导工具或 GitHub Actions 会先查询同名桶，存在则复用，不存在才创建。Cloudflare 账户第一次使用 R2 时若要求接受服务条款或开通结算，请先在 Dashboard 的 R2 Object Storage 页面完成该账户级确认，然后重跑部署。
 
 R2 桶可以保持私有，附件由 Worker 读取。若不需要附件，可以不设置 `R2_BUCKET_NAME`，工作流会从部署配置中移除 R2 绑定。
 
@@ -133,12 +127,13 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 | `ADMIN` | 是 | `admin@example.com` | 域必须包含在 `DOMAIN` 中 |
 | `D1_DATABASE_ID` | 生产升级建议 | D1 UUID | 首次自动创建时可留空 |
 | `KV_NAMESPACE_ID` | 生产升级建议 | 32 位 KV ID | 首次自动创建时可留空 |
-| `R2_BUCKET_NAME` | 附件需要 | `cloud-mail-attachments` | 必须提前存在 |
+| `R2_BUCKET_NAME` | 附件需要 | `cloud-mail-attachments` | 自动复用或创建；不用附件可留空 |
 | `PROJECT_LINK` | 否 | 仓库 HTTPS 地址 | 页面中的项目链接 |
 | `AI_MODEL` | 否 | `@cf/meta/llama-3.1-8b-instruct-fast` | 默认值已提供 |
 | `ANALYSIS_CACHE` | 否 | `false` | 只能填 `true` 或 `false` |
 | `CF_EMAIL` | 否 | `false` | 是否加入 Cloudflare 出站邮件 binding |
 | `LONGOS_RELAY_URL` | LONGOS 发信需要 | `https://admin.example.com/_longos/mail-relay` | 必须 HTTPS；不要以 `/health` 结尾 |
+| `CORS_ORIGINS` | 否 | `["https://admin.example.com"]` | 仅跨域浏览器客户端需要；默认 `[]`，同源始终允许 |
 
 `CF_EMAIL=true` 只控制出站的 `send_email` binding，不会启用入站 Email Routing。使用 LONGOS 自建发信时通常保持 `false`。
 
@@ -149,8 +144,8 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 | Secret | 必填 | 说明 |
 |---|---:|---|
 | `CLOUDFLARE_API_TOKEN` | 是 | 第 4 节创建的 Token |
-| `JWT_SECRET` | 是 | 初始化和 JWT 签名密钥，至少 32 个 URL-safe 字符 |
-| `RELAY_SHARED_SECRET` | 仅 LONGOS 发信 | 必须与 LONGOS 的 `CLOUD_MAIL_RELAY_SHARED_SECRET` 逐字一致 |
+| `JWT_SECRET` | 是 | 仅用于登录会话 JWT 签名，至少 32 个 URL-safe 字符 |
+| `LONGOS_INTEGRATION_TOKEN` | 仅 LONGOS 发信 | 在 LONGOS 后台“系统集成令牌”创建，可随时显示和复制 |
 | `RESEND_WEBHOOK_SECRET` | 仅 Resend 状态回调 | Resend 为 Webhook 签发的 `whsec_...` 密钥，不能使用 API Token 代替 |
 
 生成 `JWT_SECRET`：
@@ -167,7 +162,7 @@ $bytes = New-Object byte[] 32
 [Convert]::ToHexString($bytes).ToLowerInvariant()
 ```
 
-不要把 `JWT_SECRET` 当成管理员登录密码。首次初始化只建表；部署完成后用 `ADMIN` 地址在注册页面创建账户，该账户会被识别为管理员。
+不要把 `JWT_SECRET` 当成管理员登录密码。工作流会为每次部署自动生成独立的 `INIT_SECRET`，仅在本次数据库初始化期间存在，验收成功后立即撤销，不需要添加到 GitHub Secrets。首次初始化只建表；部署完成后用 `ADMIN` 地址在注册页面创建账户，该账户会被识别为管理员。
 
 ### 6.3 配置 Resend 投递状态回调（仅使用 Resend 时）
 
@@ -182,7 +177,7 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 
 ### 6.4 三种典型配置
 
-| 场景 | `CF_EMAIL` | `LONGOS_RELAY_URL` | `RELAY_SHARED_SECRET` | R2 |
+| 场景 | `CF_EMAIL` | `LONGOS_RELAY_URL` | `LONGOS_INTEGRATION_TOKEN` | R2 |
 |---|---:|---|---|---|
 | 仅收信 | `false` | 留空 | 留空 | 可选 |
 | Cloudflare 出站 | `true` | 留空 | 留空 | 建议 |
@@ -192,14 +187,14 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 
 ## 7. 关闭重复的 Cloudflare Git Builds
 
-本仓库以 GitHub Actions 作为唯一生产部署控制器。若此前在 Cloudflare Dashboard 连接过 Git 仓库：
+每个生产 Worker 只能保留一个部署控制器。若选择本仓库的 GitHub Actions 或本地一键部署器，请关闭此前在 Cloudflare Dashboard 连接的 Git Builds：
 
 1. Workers & Pages → 选择目标 Worker；
 2. Settings → Builds；
 3. 关闭自动生产部署，或选择 **Disable builds**；
 4. 确认不会有第二套流程在推送后覆盖 Worker。
 
-不要同时让 Cloudflare Git Builds 和 GitHub Actions 部署同一个 Worker。否则较晚完成的流程可能用缺少 D1、KV、R2、Secret 或 LONGOS 参数的配置覆盖生产版本。
+不要让 Cloudflare Git Builds、GitHub Actions 和本地命令同时部署同一个 Worker。GitHub Actions 与本地命令虽然复用同一部署器，也应固定选择一种作为日常生产入口，避免并发发布和版本倒退。
 
 ## 8. 用 GitHub Actions 首次部署
 
@@ -218,18 +213,17 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 
 工作流会依次执行：
 
-1. 检出指定版本；
-2. 安装锁定依赖；
-3. 运行依赖审计和 Worker 单元测试；
+1. 检出指定版本并调用与本地部署相同的 `scripts/deploy-cloudflare.mjs`；
+2. 按锁文件安装 Relay、Worker 与 Vue 依赖；
+3. 运行 Relay/Worker 测试、三套生产依赖审计和 Vue 正式构建；
 4. 校验域名、管理员、ID、布尔值、HTTPS 中继地址和 Secret；
-5. 创建或复用 KV；
-6. 创建或复用 D1；
-7. 构建 Vue 前端并部署 Worker；
-8. 用 `wrangler secret put` 写入 `jwt_secret`；
-9. 如已配置，再写入 `RELAY_SHARED_SECRET` 和 `RESEND_WEBHOOK_SECRET`；
-10. 调用 `POST /api/init` 创建或升级 D1 结构。
+5. 创建或复用 D1、KV 和 R2；
+6. 使用系统集成令牌验证 LONGOS 网关、Postfix、OpenDKIM、队列和幂等日志；
+7. 生成临时生产配置，在同一次发布中写入 `jwt_secret`、自动生成的 `INIT_SECRET` 及可选 LONGOS/Resend Secret；
+8. 自动撤销配置中已停用的旧 Secret；
+9. 重试 `POST /api/init` 直到自定义域证书就绪，验收公开配置接口，并撤销和复核一次性 `INIT_SECRET`。
 
-正常情况下最后一步显示 `Setup completed`。如果任何校验或初始化失败，本次工作流为失败状态，不应继续配置邮件路由。
+正常情况下最后显示 `[完成] Cloud Mail 已部署`。如果任何校验、测试、网关健康检查或初始化失败，本次工作流为失败状态，不应继续配置邮件路由。
 
 首次自动创建 D1/KV 后，建议在 Cloudflare Dashboard 复制真实 ID，补写到 GitHub Variables。这样即使以后修改 `NAME`，升级仍明确绑定原生产数据。
 
@@ -243,8 +237,8 @@ Cloudflare Dashboard → Workers & Pages → 目标 Worker：
 - Bindings 中应看到 D1 `db`、KV `kv`、Assets `assets`；
 - 配置 R2 时应看到 `r2`；
 - 配置 Workers AI 时应看到 `ai`；
-- Secrets 中应看到 `jwt_secret`，但不能读取原值；
-- 使用 LONGOS 时还应看到 `RELAY_SHARED_SECRET`。
+- Secrets 中应看到 `jwt_secret`；一次性 `INIT_SECRET` 在初始化验收完成后应已被删除；
+- 使用 LONGOS 时还应看到 `LONGOS_INTEGRATION_TOKEN`。
 - 使用 Resend 状态回调时还应看到 `RESEND_WEBHOOK_SECRET`。
 
 ### 9.2 自定义域名
@@ -297,7 +291,7 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 5. 创建一个测试邮箱账户；
 6. 根据出站方案选择邮件引擎：Cloudflare、Resend、LONGOS/自建中继或自动；
 7. 使用 LONGOS 时确认中继 URL 与 GitHub Variable 一致；
-8. 不要把 `JWT_SECRET` 或 `RELAY_SHARED_SECRET` 填入网页设置。
+8. 不要把 `JWT_SECRET` 或 `LONGOS_INTEGRATION_TOKEN` 填入网页设置。
 
 管理员身份由 `ADMIN` 环境变量中的地址判定。更改 `ADMIN` 后，只有新地址会拥有平台管理员旁路权限；因此变更前先确保新地址已注册并能登录。
 
@@ -312,11 +306,21 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 - 从外部邮箱发到测试地址，Cloud Mail 中能看到邮件；
 - 回复或新建邮件时，`From` 是当前选中的邮箱，而非统一平台地址；
 - 配置 R2 时，小附件和大附件都能上传、接收和下载；
-- LONGOS 模式下，`https://LONGOS域名/_longos/mail-relay/health` 返回 200，测试发信成功；
+- LONGOS 模式下，携带 `Authorization: Bearer <LONGOS_INTEGRATION_TOKEN>` 访问 `https://LONGOS域名/_longos/mail-relay/health` 返回 200，测试发信成功；
 - Cloudflare 日志中没有持续的 D1、KV、R2 binding missing 错误；
 - D1、KV 和 R2 的 ID/名称已记录到安全的运维台账。
 
-## 13. 本地 Wrangler 手动部署
+## 13. 本地一键部署与 Wrangler 手动排障
+
+正式本地部署不需要执行本节后面的零散命令。请在仓库根目录使用：
+
+```bash
+cp .cloud-mail.deploy.env.example .cloud-mail.deploy.env
+# 编辑本地配置后执行
+node scripts/deploy-cloudflare.mjs
+```
+
+Windows PowerShell 复制命令为 `Copy-Item .cloud-mail.deploy.env.example .cloud-mail.deploy.env`。真实配置和生成的 `mail-worker/wrangler.generated.toml` 都已加入 `.gitignore`。以下小节仅用于部署工具失败后的逐步排障。
 
 GitHub Actions 不可用时，可以在可信电脑上手动部署。要求 Node.js 22 或更高版本、pnpm 11 和可打开浏览器完成 Cloudflare 登录。
 
@@ -415,12 +419,13 @@ pnpm run test:unit
 pnpm audit --prod --audit-level moderate
 pnpm wrangler deploy -c wrangler-production.toml
 pnpm wrangler secret put jwt_secret -c wrangler-production.toml
+pnpm wrangler secret put INIT_SECRET -c wrangler-production.toml
 ```
 
-命令会提示输入 `jwt_secret`，粘贴至少 32 位 URL-safe 随机值。使用 LONGOS 时继续：
+两个 Secret 必须分别生成，不能使用相同值；均粘贴至少 32 位 URL-safe 随机字符。使用 LONGOS 时继续：
 
 ```bash
-pnpm wrangler secret put RELAY_SHARED_SECRET -c wrangler-production.toml
+pnpm wrangler secret put LONGOS_INTEGRATION_TOKEN -c wrangler-production.toml
 ```
 
 使用 Resend 状态回调时继续写入 Webhook Signing Secret：
@@ -433,13 +438,21 @@ Secret 写入会创建新的 Worker 版本。写入完成后调用初始化：
 
 ```bash
 curl -fsS -X POST \
-  -H "Authorization: Bearer 你的JWT_SECRET" \
+  -H "Authorization: Bearer 你的INIT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{}' \
   https://mail.example.com/api/init
 ```
 
-响应必须是纯文本 `success`。如果是 401，通常是 `jwt_secret` 未写入当前 Worker、密钥不一致或 Authorization 格式错误。
+响应必须是纯文本 `success`。如果是 401，通常是 `INIT_SECRET` 未写入当前 Worker、密钥不一致或 Authorization 格式错误。
+
+初始化成功后立即撤销这枚一次性密钥：
+
+```bash
+pnpm wrangler secret delete INIT_SECRET -c wrangler-production.toml
+```
+
+再次使用原 Bearer 值请求 `/api/init` 应返回 401；公开配置接口仍应正常。自动一键部署器会自动完成撤销与复核。
 
 官方参考：[Wrangler 配置](https://developers.cloudflare.com/workers/wrangler/configuration/)、[Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)。
 
@@ -504,7 +517,7 @@ API Token 无效、过期、账户范围不对或权限不足。重新创建最�
 
 ### `R2 bucket ... not found`
 
-工作流不会自动创建 R2。先在同一 Cloudflare 账户创建 Bucket，名称与 `R2_BUCKET_NAME` 完全一致；不用附件则删除该 Variable 后重跑。
+当前引导工具和 GitHub Actions 都会按 `R2_BUCKET_NAME` 查找 Bucket，不存在时自动创建。若仍报错，请确认 API Token 具有当前账户的 R2 编辑权限，且 Bucket 名称符合小写命名规则；不使用附件则留空 `R2_BUCKET_NAME` 后重跑。
 
 ### 自定义域名报 1014、1016、证书等待或显示别的网站
 
@@ -522,7 +535,7 @@ API Token 无效、过期、账户范围不对或权限不足。重新创建最�
 
 ### `/api/init` 返回 401
 
-`JWT_SECRET` 必须至少 32 位且只含字母、数字、下划线或连字符。确认 GitHub Secret、Worker 的 `jwt_secret` 和请求 Bearer 值一致，然后重跑部署。
+GitHub Actions 会自动生成并写入 `INIT_SECRET`；直接重跑部署即可。手动部署时，确认 Worker 的 `INIT_SECRET` 与请求 Bearer 值一致，且至少 32 位并只含字母、数字、下划线或连字符。
 
 ### `/api/init` 返回 500
 
@@ -534,7 +547,7 @@ API Token 无效、过期、账户范围不对或权限不足。重新创建最�
 
 - Cloudflare 引擎：确认 `CF_EMAIL=true` 且账户已取得出站能力；
 - Resend：确认 API Token 与发件域验证；
-- LONGOS：确认健康地址 200、`LONGOS_RELAY_URL` 正确、`RELAY_SHARED_SECRET` 一致、服务器出站 TCP 25/PTR/SPF/DKIM/DMARC 正常；
+- LONGOS：确认带 Bearer 令牌的健康地址返回 200、`LONGOS_RELAY_URL` 正确、系统集成令牌有效、服务器出站 TCP 25/PTR/SPF/DKIM/DMARC 正常；
 - 确认发件时选中的邮箱属于当前用户且域在角色允许列表中。
 
 ### GitHub Actions 成功但随后配置被覆盖
@@ -548,7 +561,7 @@ API Token 无效、过期、账户范围不对或权限不足。重新创建最�
 - [ ] GitHub Variables 与 Secrets 分类正确
 - [ ] `DOMAIN` 是 JSON 数组，`ADMIN` 使用其中一个域
 - [ ] D1 名称与 ID 匹配，KV ID 指向生产 Namespace
-- [ ] 需要附件时 R2 Bucket 已提前创建
+- [ ] 需要附件时已填写 R2 Bucket 名称，且账户已开通 R2（Bucket 由部署器复用或创建）
 - [ ] Cloudflare Git Builds 已禁用
 - [ ] CI 与生产部署工作流全部通过
 - [ ] `POST /api/init` 返回 `success`

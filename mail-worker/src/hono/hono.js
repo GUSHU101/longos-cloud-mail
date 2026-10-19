@@ -4,7 +4,45 @@ const app = new Hono();
 import result from '../model/result';
 import { cors } from 'hono/cors';
 
-app.use('*', cors());
+const APP_CONTENT_SECURITY_POLICY = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' https: data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
+function configuredCorsOrigins(c) {
+	const value = c.env?.cors_origins;
+	if (!value) return [];
+	if (Array.isArray(value)) return value;
+	try {
+		const parsed = JSON.parse(value);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return String(value).split(',').map(item => item.trim()).filter(Boolean);
+	}
+}
+
+function corsOrigin(origin, c) {
+	if (!origin) return undefined;
+	const ownOrigin = new URL(c.req.url).origin;
+	if (origin === ownOrigin || configuredCorsOrigins(c).includes(origin)) return origin;
+	return undefined;
+}
+
+app.use('*', cors({
+	origin: corsOrigin,
+	allowHeaders: ['Authorization', 'Content-Type'],
+	allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+	maxAge: 86400,
+}));
+
+app.use('*', async (c, next) => {
+	await next();
+	c.header('Cache-Control', 'no-store');
+	c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+	c.header('X-Content-Type-Options', 'nosniff');
+	c.header('X-Frame-Options', 'DENY');
+	c.header('Permissions-Policy', 'camera=(), geolocation=(), microphone=()');
+	if (!c.res.headers.has('Content-Security-Policy')) {
+		c.header('Content-Security-Policy', APP_CONTENT_SECURITY_POLICY);
+	}
+});
 
 app.onError((err, c) => {
 	if (err.name === 'BizError') {
@@ -37,6 +75,7 @@ app.onError((err, c) => {
 	});
 });
 
+export { APP_CONTENT_SECURITY_POLICY, configuredCorsOrigins, corsOrigin };
 export default app;
 
 

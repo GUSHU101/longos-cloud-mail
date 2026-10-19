@@ -6,6 +6,7 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
+import { sanitizeEmailHtml } from '@/utils/html-sanitizer'
 
 const props = defineProps({
   html: {
@@ -21,13 +22,9 @@ let shadowRoot = null
 function updateContent() {
   if (!shadowRoot) return;
 
-  // 1. 提取 <body> 的 style 属性（如果存在）
-  const bodyStyleRegex = /<body[^>]*style="([^"]*)"[^>]*>/i;
-  const bodyStyleMatch = props.html.match(bodyStyleRegex);
-  const bodyStyle = bodyStyleMatch ? bodyStyleMatch[1] : '';
-
-  // 2. 移除 <body> 标签（保留内容）
-  const cleanedHtml = props.html.replace(/<\/?body[^>]*>/gi, '');
+  // Incoming email HTML is untrusted. Shadow DOM isolates styles but does
+  // not block event handlers, dangerous URLs, iframes or SVG script gadgets.
+  const { bodyStyle, html: cleanedHtml } = sanitizeEmailHtml(props.html)
 
   // 3. 将 body 的 style 应用到 .shadow-content
   shadowRoot.innerHTML = `

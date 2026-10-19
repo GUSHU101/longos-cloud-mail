@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import emailService from '../src/service/email-service';
-import selfHostedMailService, { endpointFor, sign } from '../src/service/self-hosted-mail-service';
+import selfHostedMailService, { endpointFor, integrationToken, sign } from '../src/service/self-hosted-mail-service';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -39,6 +39,60 @@ describe('self-hosted relay signing', () => {
 			'https://relay.example.com',
 			{ subject: 'hello' },
 		)).rejects.toThrow('at least 32 characters');
+	});
+
+	it('prefers a scoped LONGOS integration token without exposing HMAC headers', async () => {
+		const token = `longos_it_${'a'.repeat(64)}`;
+		const fetchMock = vi.fn(async (_url, options) => {
+			expect(options.headers.authorization).toBe(`Bearer ${token}`);
+			expect(options.headers['x-relay-signature']).toBeUndefined();
+			expect(options.redirect).toBe('manual');
+			return new Response(JSON.stringify({ accepted: true, queueId: 'integration-1' }), { status: 202 });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await selfHostedMailService.send(
+			{ env: { LONGOS_INTEGRATION_TOKEN: token, RELAY_SHARED_SECRET: 'legacy-secret-that-is-long-enough-1234' } },
+			'https://relay.example.com',
+			{ subject: 'hello' },
+		);
+
+		expect(result).toEqual({ data: { id: 'integration-1' } });
+	});
+
+	it('rejects malformed integration tokens before making a request', () => {
+		expect(() => integrationToken({ env: { LONGOS_INTEGRATION_TOKEN: 'token with spaces' } }))
+			.toThrow('LONGOS_INTEGRATION_TOKEN is invalid');
+	});
+
+	it('checks LONGOS relay health with the scoped bearer token', async () => {
+		const token = `longos_it_${'b'.repeat(64)}`;
+		const fetchMock = vi.fn(async (url, options) => {
+			expect(url).toBe('https://relay.example.com/base/health');
+			expect(options.method).toBe('GET');
+			expect(options.headers.authorization).toBe(`Bearer ${token}`);
+			expect(options.redirect).toBe('manual');
+			return new Response(JSON.stringify({
+				status: 'ok',
+				queueDepth: 3,
+				uncertainRequests: 1,
+				receiptRecords: 25,
+				receiptCapacity: 100000,
+			}), {status: 200});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(selfHostedMailService.health(
+			{env: {LONGOS_INTEGRATION_TOKEN: token}},
+			'https://relay.example.com/base',
+		)).resolves.toEqual({
+			status: 'ok',
+			authMode: 'integration_token',
+			queueDepth: 3,
+			uncertainRequests: 1,
+			receiptRecords: 25,
+			receiptCapacity: 100000,
+		});
 	});
 
 	it('submits a signed JSON request and returns the relay queue id', async () => {

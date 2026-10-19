@@ -6,7 +6,7 @@ describe('mail provider selection', () => {
 		expect(selectExternalMailProvider({
 			mailEngine: 'auto',
 			relayUrl: 'https://shop.example.com/_longos/mail-relay',
-			hasRelaySecret: true,
+			hasRelayCredential: true,
 			useCloudflareEmail: true,
 			hasResendToken: true,
 		})).toBe('self_hosted');
@@ -16,7 +16,7 @@ describe('mail provider selection', () => {
 		expect(selectExternalMailProvider({
 			mailEngine: 'auto',
 			relayUrl: '',
-			hasRelaySecret: false,
+			hasRelayCredential: false,
 			useCloudflareEmail: true,
 			hasResendToken: true,
 		})).toBe('cloudflare');

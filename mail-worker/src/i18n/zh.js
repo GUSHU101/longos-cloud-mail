@@ -25,7 +25,7 @@ const zh = {
 	noResendToken: 'Resend未配置，只能给站内邮箱发件',
 	noSendProvider: '发信服务未配置，只能给站内邮箱发件',
 	noCloudflareEmailBinding: 'Cloudflare 邮件发送绑定未配置',
-	noSelfHostedRelay: '自建邮件中继地址或 RELAY_SHARED_SECRET 未配置',
+	noSelfHostedRelay: '自建邮件中继地址或 LONGOS_INTEGRATION_TOKEN 未配置',
 	sendEmailNotCurUser: '发件人邮箱非当前用户所有',
 	notExistEmailReply: '邮件不存在无法回复',
 	imageAttLimit: '图片不能超过10个',

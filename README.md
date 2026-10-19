@@ -34,7 +34,7 @@
 
 只需要一个域名，就可以创建多个不同的邮箱，类似各大邮箱平台。本项目支持部署到 Cloudflare Workers，降低服务器成本，搭建自己的邮箱服务。
 
-本发行版保留 [maillab/cloud-mail](https://github.com/maillab/cloud-mail) 的上游授权与来源说明，并集成 LONGOS 自建邮件引擎。新版独立仓库为 [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail)，当前正式版本：**v4.2.0**。
+本发行版保留 [maillab/cloud-mail](https://github.com/maillab/cloud-mail) 的上游授权与来源说明，并集成 LONGOS 自建邮件引擎。新版独立仓库为 [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail)，当前版本：**v4.4.0**。
 
 ## 项目展示
 
@@ -42,6 +42,7 @@
 - [部署文档](https://doc.skymail.ink)<br>
 - [Cloudflare Workers 从零部署手册](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md)<br>
 - [Cloud Mail + LONGOS 一体化自建发信手册](./doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)<br>
+- [Cloud Mail + LONGOS 最短部署流程（一条命令）](./doc/QUICK_START.md)<br>
 
 | ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
 |-----------------------|-----------------------|
@@ -100,15 +101,19 @@
 
 ## LONGOS 一体化自建发信
 
-如 Cloud Mail 与 LONGOS 配套使用，LONGOS 的 Docker 安装模式会在执行根目录 `./install.sh` 时随网站自动构建并启动 Postfix/OpenDKIM；不需要进入 `mail-relay` 目录，也不需要单独部署第二套服务。Cloudflare Worker 通过 LONGOS 网站的 `https://站点域名/_longos/mail-relay` 提交 HMAC 签名请求。纯宝塔/LNMP 安装不会启动该中继；健康地址返回 404 时不应在 Worker 中配置中继地址。
+首次部署请直接按[最短部署流程](./doc/QUICK_START.md)操作：复制一个本地配置文件后运行 `node scripts/deploy-cloudflare.mjs`。工具会自动测试、创建或复用 D1/KV/R2、验证 LONGOS 邮件网关、发布 Worker、写入 Secret 并初始化数据库；不再需要手工拼 Wrangler 配置。
+
+如 Cloud Mail 与 LONGOS 配套使用，LONGOS 通过 **GitHub + Coolify Raw Docker Compose + Coolify 集成 Caddy** 一次部署网站、MySQL、队列、计划任务和 Postfix/OpenDKIM；不需要进入 `mail-relay` 目录，也不需要单独部署第二套服务。Cloudflare Worker 只通过 LONGOS **主站控制域名**的 `https://主站域名/_longos/mail-relay` 提交有限权集成令牌；LONGOS 验证租户发件人后才会转为私有网络内的 HMAC 请求。只有携带系统集成令牌的健康检查返回 200 时，才应在 Worker 中配置该中继地址。
 
 Cloudflare Account、API Token、D1/KV/R2、GitHub Actions、自定义域、Email Routing、首次初始化、升级和回滚的逐步操作请先参阅：[Cloudflare Workers 完整部署手册](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md)。服务器要求、LONGOS 首次安装、DNS/PTR、租户发件域与自建出站排障请参阅：[Cloud Mail + LONGOS 一体化自建邮件部署与升级](./doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)。
 
-在本仓库 GitHub Actions 中配置 `LONGOS_RELAY_URL`，并把 LONGOS `.env` 的 `CLOUD_MAIL_RELAY_SHARED_SECRET` 保存为同名的 `RELAY_SHARED_SECRET` 后，从 `main` 分支手动运行 `Deploy cloud-mail to Cloudflare Workers`。工作流会完成生产部署并写入 Worker Secret，后台“自动”模式会优先使用 LONGOS 内置引擎。Cloudflare Git Builds 应保持禁用，避免两套流程同时覆盖 Worker。LONGOS 应用和 Cloud Mail 使用不同的签名密钥。独立使用 Cloud Mail、未安装 LONGOS 时，仍可按 [`mail-relay`](./mail-relay/README.md) 的通用方式部署。
+只在 LONGOS 主站后台“系统集成令牌”中创建一枚 Cloud Mail 令牌，然后在本仓库 GitHub Actions 中配置 `LONGOS_RELAY_URL` 和 Secret `LONGOS_INTEGRATION_TOKEN`，再从 `main` 分支运行 `Deploy cloud-mail to Cloudflare Workers`。该主站绑定自动服务全部活跃租户，子站不需要重复创建令牌。租户由发件地址的稳定 `+site-code` 标识解析，更换商店域名不影响使用。令牌由 LONGOS 使用 `APP_KEY` 加密保存，可在后台随时显示和复制；鉴权仍只比对哈希，显示操作受限流并记录最后显示时间与次数。工作流会将令牌写入 Worker Secret，Cloud Mail 网页和 D1 都不保存原文。后台“自动”模式会优先使用 LONGOS 内置引擎。`RELAY_SHARED_SECRET` 仅保留给独立或旧版 HMAC 中继兼容。
+
+租户后台可自行修改默认及各业务分类的发件地址。换域名时，新发件域必须既已在邮件中继的 `MAIL_RELAY_DOMAINS`/`MAIL_RELAY_ALLOWED_SENDER_DOMAINS` 中完成签名，又已由 LONGOS 主站管理员唯一分配给当前租户。网站访问域与邮件发件域独立，例如 `www.example.com` 店铺可使用 `orders@example.com`。邮件设置页只显示“邮局已签名 + 主站已分配”的交集，切换后仍共用原有主站集成令牌。
 
 发件时的 `From` 始终来自用户当前选中的 Cloud Mail 账户。Worker 会校验该账户属于当前用户且其域名在角色权限内，不会统一改写成 LONGOS 的默认邮箱。
 
-自建模式仍需要固定公网 IP、可设置 PTR/rDNS，并且服务器允许出站 TCP 25。API 密钥只保存在 LONGOS 服务器环境变量、GitHub Secret 和 Cloudflare Worker Secret 中，不写入网页或 D1。
+自建模式仍需要固定公网 IP、可设置 PTR/rDNS，并且服务器允许出站 TCP 25。集成令牌在 LONGOS 中以 `APP_KEY` 加密保存并以哈希鉴权，同时写入 GitHub Secret 和 Cloudflare Worker Secret；服务器内部 HMAC 密钥则只留在 LONGOS 服务器，两者都不写入网页或 D1。
 
 ## 目录结构
 
@@ -132,7 +137,7 @@ cloud-mail
 │   │   ├── template			# 消息模板
 │   │   ├── utils			    # 工具类
 │   │   └── index.js			# 入口文件
-│   ├── pageckge.json			# 项目依赖
+│   ├── package.json			# 项目依赖
 │   └── wrangler.toml			# 项目配置
 │
 ├── mail-vue				    # vue前端项目

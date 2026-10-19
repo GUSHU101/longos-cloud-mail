@@ -32,7 +32,7 @@ not_found_handling = "single-page-application"
 run_worker_first = true
 
 [triggers]
-crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生效
+crons = ["0 * * * *", "30 * * * *"] #整点维护；半点仅刷新分析缓存
 
 
 [vars]
@@ -41,12 +41,14 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 #orm_log = false			#是否sql日志
 #domain = []				#邮件域名可可配置多个 示例: ["example1.com","example2.com"]
 #admin = ""					#管理员的邮箱	示例: admin@example.com
+#cors_origins = []			#可选：允许跨域调用 API 的浏览器来源（完整 https://origin）
 #longos_relay_url = ""		#LONGOS 自建中继 HTTPS 地址；不用时留空
 # jwt_secret 必须使用 `wrangler secret put jwt_secret` 写入，至少 32 位 URL-safe 随机字符。
+# INIT_SECRET 是独立的数据库初始化密钥；GitHub Actions 会自动生成并轮换，本地部署需作为 Worker Secret 写入。
 # 不要把 jwt_secret、Cloudflare API Token 或其他凭据写入 [vars] 或提交到 Git。
 # RELAY_SHARED_SECRET must be stored with `wrangler secret put RELAY_SHARED_SECRET`.
 # RESEND_WEBHOOK_SECRET must be stored with `wrangler secret put RESEND_WEBHOOK_SECRET`.
 # Do not put relay or webhook secrets in this file or commit them to Git.
 
 [build]
-command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"
+command = "pnpm --prefix ../mail-vue install --frozen-lockfile && pnpm --prefix ../mail-vue run build"

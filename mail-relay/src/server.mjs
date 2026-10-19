@@ -1,9 +1,22 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { basename } from 'node:path';
+import {
+  accessSync,
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { domainToASCII } from 'node:url';
+import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { verifySignedRequest } from './security.mjs';
 
@@ -15,12 +28,24 @@ const clientSecrets = new Map([
 ].filter(([, secret]) => secret));
 const maxRequestBytes = toPositiveInt(process.env.MAX_REQUEST_BYTES, 25 * 1024 * 1024);
 const maxAttachmentBytes = toPositiveInt(process.env.MAX_ATTACHMENT_BYTES, 20 * 1024 * 1024);
+const maxAttachments = toPositiveInt(process.env.MAX_ATTACHMENTS, 25);
 const maxRecipients = toPositiveInt(process.env.MAX_RECIPIENTS, 50);
 const maxRequestsPerMinute = toPositiveInt(process.env.MAX_REQUESTS_PER_MINUTE, 120);
 const maxRequestsPerMinuteGlobal = toPositiveInt(process.env.MAX_REQUESTS_PER_MINUTE_GLOBAL, maxRequestsPerMinute * 10);
+const maxIncomingRequestsPerMinute = toPositiveInt(
+  process.env.MAX_INCOMING_REQUESTS_PER_MINUTE,
+  maxRequestsPerMinuteGlobal * 2,
+);
 const maxConcurrentSends = toPositiveInt(process.env.MAX_CONCURRENT_SENDS, 25);
-const healthCacheTtlMs = toPositiveInt(process.env.HEALTH_CACHE_TTL_MS, 5_000);
 const signatureWindowSeconds = toPositiveInt(process.env.SIGNATURE_WINDOW_SECONDS, 300);
+const maxNonceRecords = toPositiveInt(process.env.MAX_NONCE_RECORDS, Math.max(10_000, maxRequestsPerMinuteGlobal * 10));
+const idempotencyRetentionSeconds = toPositiveInt(
+  process.env.IDEMPOTENCY_RETENTION_SECONDS,
+  Math.max(86_400, signatureWindowSeconds * 2),
+);
+const maxIdempotencyRecords = toPositiveInt(process.env.MAX_IDEMPOTENCY_RECORDS, 100_000);
+const maxQueueMessages = toPositiveInt(process.env.MAX_QUEUE_MESSAGES, 1000);
+const idempotencyStorePath = String(process.env.IDEMPOTENCY_STORE_PATH || '').trim();
 const allowedSenderDomains = new Set(
   (process.env.ALLOWED_SENDER_DOMAINS || '')
     .split(',')
@@ -37,8 +62,18 @@ for (const [client, secret] of clientSecrets) {
     throw new Error(`${client} relay secret must contain at least 32 characters`);
   }
 }
+if (
+  process.env.LONGOS_RELAY_SHARED_SECRET
+  && process.env.CLOUD_MAIL_RELAY_SHARED_SECRET
+  && process.env.LONGOS_RELAY_SHARED_SECRET === process.env.CLOUD_MAIL_RELAY_SHARED_SECRET
+) {
+  throw new Error('LONGOS and Cloud Mail relay secrets must be different');
+}
 if (allowedSenderDomains.size === 0) {
   throw new Error('ALLOWED_SENDER_DOMAINS must contain at least one domain');
+}
+if (!idempotencyStorePath && process.env.NODE_ENV !== 'test') {
+  throw new Error('IDEMPOTENCY_STORE_PATH is required for restart-safe delivery');
 }
 
 const transporter = process.env.NODE_ENV === 'test' && process.env.RELAY_TEST_TRANSPORT === 'stream'
@@ -48,15 +83,19 @@ const transporter = process.env.NODE_ENV === 'test' && process.env.RELAY_TEST_TR
     newline: 'unix',
     path: '/usr/sbin/sendmail',
   });
-const execFileAsync = promisify(execFile);
-
 const usedNonces = new Map();
 const completedRequests = new Map();
-const inFlightRequests = new Set();
+const uncertainRequests = new Map();
+const inFlightRequests = new Map();
 const rateBuckets = new Map();
 let globalRateBucket = { minute: -1, count: 0 };
-let healthResult = { checkedAt: 0, healthy: false };
-let healthCheckPromise;
+let incomingRateBucket = { minute: -1, count: 0 };
+let receiptStoreHealthy = true;
+let lastReceiptCompaction = 0;
+let lastHealthCheck = 0;
+let cachedHealth = { healthy: false, queueDepth: maxQueueMessages + 1 };
+let healthCheckPromise = null;
+const execFileAsync = promisify(execFile);
 
 function toPositiveInt(value, fallback) {
   const parsed = Number(value);
@@ -73,29 +112,157 @@ function json(response, status, body, extraHeaders = {}) {
   response.end(JSON.stringify(body));
 }
 
-async function checkPostfixHealth() {
-  const now = Date.now();
-  if (now - healthResult.checkedAt < healthCacheTtlMs) return healthResult.healthy;
-  if (!healthCheckPromise) {
-    healthCheckPromise = execFileAsync('postfix', ['status'], { timeout: 2_000 })
-      .then(() => true)
-      .catch(() => false)
-      .then(healthy => {
-        healthResult = { checkedAt: Date.now(), healthy };
-        return healthy;
-      })
-      .finally(() => {
-        healthCheckPromise = undefined;
-      });
-  }
-  return healthCheckPromise;
+function receiptRecordCount() {
+  return completedRequests.size + uncertainRequests.size;
 }
 
-function rateLimitExceeded(key) {
+function receiptCapacityAvailable() {
+  return receiptRecordCount() < maxIdempotencyRecords;
+}
+
+function fsyncDirectory(path) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, 'r');
+    fsyncSync(descriptor);
+  } catch {
+    // Some filesystems do not support directory fsync. The journal file is
+    // still fsynced before every atomic rename.
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function appendReceiptRecord(record) {
+  if (!idempotencyStorePath) return;
+  mkdirSync(dirname(idempotencyStorePath), { recursive: true, mode: 0o700 });
+  let descriptor;
+  try {
+    descriptor = openSync(idempotencyStorePath, 'a', 0o600);
+    writeSync(descriptor, `${JSON.stringify(record)}\n`, null, 'utf8');
+    fsyncSync(descriptor);
+    receiptStoreHealthy = true;
+  } catch (error) {
+    receiptStoreHealthy = false;
+    throw new Error('Unable to persist the relay idempotency journal', { cause: error });
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function compactReceiptStore(force = false) {
+  if (!idempotencyStorePath || (!force && Date.now() - lastReceiptCompaction < 3_600_000)) return;
+  const temporaryPath = `${idempotencyStorePath}.${process.pid}.tmp`;
+  const records = [
+    ...[...completedRequests].map(([key, item]) => ({ key, state: 'accepted', ...item })),
+    ...[...uncertainRequests].map(([key, item]) => ({ key, state: 'pending', ...item })),
+  ].sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
+  const lines = records.map(item => JSON.stringify(item));
+  try {
+    let descriptor;
+    try {
+      descriptor = openSync(temporaryPath, 'wx', 0o600);
+      writeSync(descriptor, lines.length ? `${lines.join('\n')}\n` : '', null, 'utf8');
+      fsyncSync(descriptor);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
+    renameSync(temporaryPath, idempotencyStorePath);
+    fsyncDirectory(dirname(idempotencyStorePath));
+    lastReceiptCompaction = Date.now();
+    receiptStoreHealthy = true;
+  } catch (error) {
+    try { unlinkSync(temporaryPath); } catch {}
+    receiptStoreHealthy = false;
+    console.error('Unable to compact the relay idempotency store', error);
+  }
+}
+
+function rememberPendingRequest(key, requestHash = '') {
+  const item = { createdAt: Date.now(), requestHash };
+  appendReceiptRecord({ key, state: 'pending', ...item });
+  completedRequests.delete(key);
+  uncertainRequests.delete(key);
+  uncertainRequests.set(key, item);
+}
+
+function rememberCompletedRequest(key, body, requestHash = '') {
+  const item = { createdAt: Date.now(), body, requestHash };
+  appendReceiptRecord({ key, state: 'accepted', ...item });
+  completedRequests.delete(key);
+  completedRequests.set(key, item);
+  uncertainRequests.delete(key);
+}
+
+function releasePendingRequest(key, requestHash = '') {
+  appendReceiptRecord({ key, state: 'released', createdAt: Date.now(), requestHash });
+  uncertainRequests.delete(key);
+}
+
+function initializeReceiptStore() {
+  if (!idempotencyStorePath) return;
+  try {
+    mkdirSync(dirname(idempotencyStorePath), { recursive: true, mode: 0o700 });
+    if (existsSync(idempotencyStorePath)) {
+      const oldest = Date.now() - idempotencyRetentionSeconds * 1000;
+      for (const line of readFileSync(idempotencyStorePath, 'utf8').split('\n')) {
+        if (!line) continue;
+        try {
+          const item = JSON.parse(line);
+          if (typeof item.key !== 'string' || Number(item.createdAt) < oldest) continue;
+          const requestHash = /^[a-f0-9]{64}$/.test(item.requestHash || item.payloadHash || '')
+            ? (item.requestHash || item.payloadHash)
+            : '';
+          const state = item.state || (item.body?.accepted === true ? 'accepted' : '');
+          completedRequests.delete(item.key);
+          uncertainRequests.delete(item.key);
+          if (state === 'accepted' && item.body?.accepted === true) {
+            completedRequests.set(item.key, {
+              createdAt: Number(item.createdAt),
+              body: item.body,
+              requestHash,
+            });
+          } else if (state === 'pending') {
+            uncertainRequests.set(item.key, {
+              createdAt: Number(item.createdAt),
+              requestHash,
+            });
+          }
+        } catch {
+          // A hard stop can leave a partial final line. Earlier durable
+          // records remain valid and the next compaction removes the fragment.
+        }
+      }
+    }
+    if (receiptRecordCount() > maxIdempotencyRecords) {
+      throw new Error(
+        `Relay idempotency journal contains ${receiptRecordCount()} live records, exceeding MAX_IDEMPOTENCY_RECORDS=${maxIdempotencyRecords}`,
+      );
+    }
+    compactReceiptStore(true);
+  } catch (error) {
+    throw new Error('Unable to initialize the relay idempotency store', { cause: error });
+  }
+}
+
+initializeReceiptStore();
+
+function globalRateLimitExceeded() {
   const minute = Math.floor(Date.now() / 60_000);
   if (globalRateBucket.minute !== minute) globalRateBucket = { minute, count: 0 };
   globalRateBucket.count += 1;
-  if (globalRateBucket.count > maxRequestsPerMinuteGlobal) return true;
+  return globalRateBucket.count > maxRequestsPerMinuteGlobal;
+}
+
+function incomingRateLimitExceeded() {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (incomingRateBucket.minute !== minute) incomingRateBucket = { minute, count: 0 };
+  incomingRateBucket.count += 1;
+  return incomingRateBucket.count > maxIncomingRequestsPerMinute;
+}
+
+function senderRateLimitExceeded(key) {
+  const minute = Math.floor(Date.now() / 60_000);
   const bucket = rateBuckets.get(key);
   if (!bucket || bucket.minute !== minute) {
     rateBuckets.set(key, { minute, count: 1 });
@@ -120,7 +287,7 @@ async function readBody(request) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function verifySignature(request, rawBody, secret) {
+function verifySignature(request, rawBody, secret, relayClient) {
   return verifySignedRequest({
     secret,
     timestamp: request.headers['x-relay-timestamp'],
@@ -129,25 +296,37 @@ function verifySignature(request, rawBody, secret) {
     rawBody,
     windowSeconds: signatureWindowSeconds,
     usedNonces,
+    nonceScope: relayClient,
+    maxNonceRecords,
   });
 }
 
 function cleanupReplayState() {
-  const oldest = Date.now() - signatureWindowSeconds * 2 * 1000;
+  const nonceOldest = Date.now() - signatureWindowSeconds * 2 * 1000;
+  const receiptOldest = Date.now() - idempotencyRetentionSeconds * 1000;
   for (const [key, createdAt] of usedNonces) {
-    if (createdAt < oldest) usedNonces.delete(key);
+    if (createdAt < nonceOldest) usedNonces.delete(key);
   }
   for (const [key, item] of completedRequests) {
-    if (item.createdAt < oldest) completedRequests.delete(key);
+    if (item.createdAt < receiptOldest) completedRequests.delete(key);
+  }
+  for (const [key, item] of uncertainRequests) {
+    if (item.createdAt < receiptOldest) uncertainRequests.delete(key);
   }
   const currentMinute = Math.floor(Date.now() / 60_000);
   for (const [key, bucket] of rateBuckets) {
     if (bucket.minute < currentMinute - 1) rateBuckets.delete(key);
   }
+  compactReceiptStore();
 }
 
 function cleanHeader(value, field, maxLength = 998) {
-  const normalized = String(value ?? '').trim();
+  if (typeof value !== 'string') {
+    const error = new Error(`Invalid ${field}`);
+    error.status = 400;
+    throw error;
+  }
+  const normalized = value.trim();
   if (normalized.length > maxLength || /[\r\n]/.test(normalized)) {
     const error = new Error(`Invalid ${field}`);
     error.status = 400;
@@ -208,7 +387,7 @@ function normalizeSenderContext(value) {
     error.status = 400;
     throw error;
   }
-  const source = cleanHeader(value.source || 'unknown', 'senderContext.source', 32);
+  const source = cleanHeader(value.source ?? 'unknown', 'senderContext.source', 32);
   if (!['longos', 'cloud-mail', 'unknown'].includes(source)) {
     const error = new Error('Invalid senderContext.source');
     error.status = 400;
@@ -216,10 +395,10 @@ function normalizeSenderContext(value) {
   }
   return {
     source,
-    tenantId: cleanHeader(value.tenantId || '', 'senderContext.tenantId', 128),
-    tenantCode: cleanHeader(value.tenantCode || '', 'senderContext.tenantCode', 128),
-    accountId: cleanHeader(value.accountId || '', 'senderContext.accountId', 128),
-    category: cleanHeader(value.category || '', 'senderContext.category', 64),
+    tenantId: cleanHeader(value.tenantId ?? '', 'senderContext.tenantId', 128),
+    tenantCode: cleanHeader(value.tenantCode ?? '', 'senderContext.tenantCode', 128),
+    accountId: cleanHeader(value.accountId ?? '', 'senderContext.accountId', 128),
+    category: cleanHeader(value.category ?? '', 'senderContext.category', 64),
   };
 }
 
@@ -230,7 +409,7 @@ function normalizeMessage(body) {
     throw error;
   }
 
-  const requestId = cleanHeader(body.requestId || crypto.randomUUID(), 'requestId', 128);
+  const requestId = cleanHeader(body.requestId === undefined ? crypto.randomUUID() : body.requestId, 'requestId', 128);
   if (!/^[a-zA-Z0-9._:-]+$/.test(requestId)) {
     const error = new Error('Invalid requestId');
     error.status = 400;
@@ -255,7 +434,7 @@ function normalizeMessage(body) {
   }
 
   const subject = cleanHeader(body.subject, 'subject');
-  const fromName = cleanHeader(body.from?.name || '', 'from name', 200);
+  const fromName = cleanHeader(body.from?.name ?? '', 'from name', 200);
   if (body.headers !== undefined && (!body.headers || typeof body.headers !== 'object' || Array.isArray(body.headers))) {
     const error = new Error('Headers must be an object');
     error.status = 400;
@@ -273,6 +452,11 @@ function normalizeMessage(body) {
     error.status = 400;
     throw error;
   }
+  if ((body.attachments || []).length > maxAttachments) {
+    const error = new Error(`Attachment count must not exceed ${maxAttachments}`);
+    error.status = 400;
+    throw error;
+  }
 
   let attachmentBytes = 0;
   const attachments = (body.attachments || []).map((attachment, index) => {
@@ -282,12 +466,24 @@ function normalizeMessage(body) {
       throw error;
     }
     const encodedContent = attachment.content.replace(/\s/g, '');
-    if (!/^[a-zA-Z0-9+/]*={0,2}$/.test(encodedContent) || encodedContent.length % 4 === 1) {
+    if (!/^[a-zA-Z0-9+/]*={0,2}$/.test(encodedContent) || encodedContent.length % 4 !== 0) {
       const error = new Error(`Invalid base64 attachment at index ${index}`);
       error.status = 400;
       throw error;
     }
+    const padding = encodedContent.endsWith('==') ? 2 : encodedContent.endsWith('=') ? 1 : 0;
+    const decodedBytes = encodedContent.length / 4 * 3 - padding;
+    if (attachmentBytes + decodedBytes > maxAttachmentBytes) {
+      const error = new Error('Attachments are too large');
+      error.status = 413;
+      throw error;
+    }
     const content = Buffer.from(encodedContent, 'base64');
+    if (content.toString('base64') !== encodedContent) {
+      const error = new Error(`Invalid base64 attachment at index ${index}`);
+      error.status = 400;
+      throw error;
+    }
     attachmentBytes += content.length;
     if (attachmentBytes > maxAttachmentBytes) {
       const error = new Error('Attachments are too large');
@@ -295,16 +491,26 @@ function normalizeMessage(body) {
       throw error;
     }
     return {
-      filename: cleanHeader(basename(attachment.filename || `attachment-${index + 1}`), 'filename', 255),
+      filename: basename(cleanHeader(attachment.filename ?? `attachment-${index + 1}`, 'filename', 255)),
       content,
-      contentType: cleanHeader(attachment.contentType || 'application/octet-stream', 'content type', 200),
+      contentType: cleanHeader(attachment.contentType ?? 'application/octet-stream', 'content type', 200),
       cid: attachment.contentId ? cleanHeader(attachment.contentId, 'content id', 255) : undefined,
       contentDisposition: attachment.disposition === 'inline' ? 'inline' : 'attachment',
     };
   });
 
-  const text = typeof body.text === 'string' ? body.text : undefined;
-  const html = typeof body.html === 'string' ? body.html : undefined;
+  if (body.text !== undefined && typeof body.text !== 'string') {
+    const error = new Error('Message text must be a string');
+    error.status = 400;
+    throw error;
+  }
+  if (body.html !== undefined && typeof body.html !== 'string') {
+    const error = new Error('Message HTML must be a string');
+    error.status = 400;
+    throw error;
+  }
+  const text = body.text || undefined;
+  const html = body.html || undefined;
   if (!text && !html) {
     const error = new Error('Message text or HTML is required');
     error.status = 400;
@@ -335,8 +541,20 @@ function normalizeMessage(body) {
 }
 
 async function handleSend(request, response) {
+  if (incomingRateLimitExceeded()) {
+    return json(response, 429, { accepted: false, message: 'Incoming request limit exceeded' }, { 'retry-after': '60' });
+  }
   if (!/^application\/json(?:\s*;|$)/i.test(String(request.headers['content-type'] || ''))) {
     return json(response, 415, { accepted: false, message: 'Content-Type must be application/json' });
+  }
+  const contentLength = request.headers['content-length'];
+  if (contentLength !== undefined) {
+    if (!/^\d+$/.test(contentLength)) {
+      return json(response, 400, { accepted: false, message: 'Invalid Content-Length' });
+    }
+    if (Number(contentLength) > maxRequestBytes) {
+      return json(response, 413, { accepted: false, message: 'Request body is too large' });
+    }
   }
   const rawBody = await readBody(request);
   const relayClient = cleanHeader(request.headers['x-relay-client'] || (legacySharedSecret ? 'legacy' : ''), 'relay client', 32);
@@ -344,8 +562,13 @@ async function handleSend(request, response) {
   if (!secret) {
     return json(response, 401, { accepted: false, message: 'Unknown relay client' });
   }
-  if (!verifySignature(request, rawBody, secret)) {
+  if (!verifySignature(request, rawBody, secret, relayClient)) {
     return json(response, 401, { accepted: false, message: 'Invalid or expired signature' });
+  }
+  // Count every authenticated request before JSON parsing or attachment
+  // decoding so signed malformed traffic cannot bypass global backpressure.
+  if (globalRateLimitExceeded()) {
+    return json(response, 429, { accepted: false, message: 'Global rate limit exceeded' }, { 'retry-after': '60' });
   }
 
   let parsed;
@@ -360,17 +583,27 @@ async function handleSend(request, response) {
     return json(response, 403, { accepted: false, message: 'Relay client does not match sender context' });
   }
   const replayKey = `${relayClient}:${requestId}`;
-  const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
+  const requestHash = crypto.createHash('sha256').update(rawBody).digest('hex');
   const previous = completedRequests.get(replayKey);
   if (previous) {
-    if (previous.payloadHash !== payloadHash) {
+    if (previous.requestHash && previous.requestHash !== requestHash) {
       return json(response, 409, { accepted: false, message: 'Request ID was already used for different content' });
     }
     return json(response, 202, previous.body);
   }
 
+  const uncertain = uncertainRequests.get(replayKey);
+  if (uncertain) {
+    const message = uncertain.requestHash && uncertain.requestHash !== requestHash
+      ? 'Request ID was already used for different content'
+      : 'Previous delivery status is uncertain; the relay refused an automatic duplicate';
+    return json(response, 409, { accepted: false, retryable: false, message });
+  }
   if (inFlightRequests.has(replayKey)) {
-    return json(response, 409, { accepted: false, message: 'Request is already being processed' });
+    const message = inFlightRequests.get(replayKey) === requestHash
+      ? 'Request is already being processed'
+      : 'Request ID is already processing different content';
+    return json(response, 409, { accepted: false, message });
   }
   if (inFlightRequests.size >= maxConcurrentSends) {
     return json(
@@ -380,23 +613,42 @@ async function handleSend(request, response) {
       { 'retry-after': '1' },
     );
   }
-  if (rateLimitExceeded(rateKey)) {
-    return json(response, 429, { accepted: false, message: 'Rate limit exceeded' });
+  if (senderRateLimitExceeded(rateKey)) {
+    return json(response, 429, { accepted: false, message: 'Sender rate limit exceeded' }, { 'retry-after': '60' });
+  }
+  if (!receiptCapacityAvailable()) {
+    return json(
+      response,
+      503,
+      { accepted: false, retryable: true, message: 'Relay delivery journal is at capacity; retry later' },
+      { 'retry-after': '60' },
+    );
+  }
+  const operational = await relayHealth();
+  if (!operational.healthy) {
+    return json(
+      response,
+      503,
+      { accepted: false, retryable: true, message: 'Mail relay is not ready' },
+      { 'retry-after': '5' },
+    );
   }
 
-  inFlightRequests.add(replayKey);
+  // Persist intent before invoking sendmail. If the process dies after
+  // Postfix accepts the message but before the final receipt is written, the
+  // restart fails closed instead of sending the same order/recovery twice.
+  rememberPendingRequest(replayKey, requestHash);
+  inFlightRequests.set(replayKey, requestHash);
+  let acceptedByPostfix = false;
   try {
     const info = await transporter.sendMail(mail);
+    acceptedByPostfix = true;
     const result = {
       accepted: true,
       queueId: requestId,
       messageId: info.messageId || mail.messageId,
     };
-    completedRequests.set(replayKey, {
-      createdAt: Date.now(),
-      payloadHash,
-      body: result,
-    });
+    rememberCompletedRequest(replayKey, result, requestHash);
     console.info(JSON.stringify({
       event: 'mail_queued',
       queueId: requestId,
@@ -408,17 +660,80 @@ async function handleSend(request, response) {
       senderDomain: mail.from.address.split('@')[1],
     }));
     return json(response, 202, result);
+  } catch (error) {
+    if (!acceptedByPostfix) {
+      // Local sendmail did not report acceptance, so a retry is safe after a
+      // durable release tombstone. An accepted-but-unconfirmed submission is
+      // deliberately left uncertain for manual inspection.
+      releasePendingRequest(replayKey, requestHash);
+    }
+    throw error;
   } finally {
     inFlightRequests.delete(replayKey);
   }
 }
 
+async function relayHealth(force = false) {
+  if (process.env.NODE_ENV === 'test' && process.env.RELAY_TEST_TRANSPORT === 'stream') {
+    return { healthy: receiptStoreHealthy, queueDepth: 0 };
+  }
+  if (!force && Date.now() - lastHealthCheck < 5_000) return cachedHealth;
+  if (healthCheckPromise) return healthCheckPromise;
+
+  healthCheckPromise = (async () => {
+    let storeWritable = true;
+    try {
+      if (idempotencyStorePath) accessSync(dirname(idempotencyStorePath), fsConstants.W_OK);
+    } catch {
+      storeWritable = false;
+    }
+    const runHealthCommand = async (command, args, options = {}) => {
+      try {
+        const result = await execFileAsync(command, args, options);
+        return { ok: true, stdout: result.stdout || '' };
+      } catch {
+        return { ok: false, stdout: '' };
+      }
+    };
+    const [postfix, opendkim, queue] = await Promise.all([
+      runHealthCommand('postfix', ['status'], { timeout: 3_000, windowsHide: true }),
+      runHealthCommand('pgrep', ['-x', 'opendkim'], { timeout: 3_000, windowsHide: true }),
+      runHealthCommand('postqueue', ['-j'], {
+        encoding: 'utf8',
+        timeout: 5_000,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+      }),
+    ]);
+    const queueDepth = queue.ok
+      ? String(queue.stdout).split('\n').filter(line => line.trim() !== '').length
+      : maxQueueMessages + 1;
+    const healthy = postfix.ok
+      && opendkim.ok
+      && queue.ok
+      && queueDepth <= maxQueueMessages
+      && receiptStoreHealthy
+      && storeWritable
+      && receiptCapacityAvailable();
+    lastHealthCheck = Date.now();
+    cachedHealth = { healthy, queueDepth };
+    return cachedHealth;
+  })().finally(() => {
+    healthCheckPromise = null;
+  });
+  return healthCheckPromise;
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && request.url === '/health') {
-      const healthy = await checkPostfixHealth();
-      return json(response, healthy ? 200 : 503, {
-        status: healthy ? 'ok' : 'degraded',
+      const health = await relayHealth();
+      return json(response, health.healthy ? 200 : 503, {
+        status: health.healthy ? 'ok' : 'degraded',
+        queueDepth: health.queueDepth,
+        uncertainRequests: uncertainRequests.size,
+        receiptRecords: receiptRecordCount(),
+        receiptCapacity: maxIdempotencyRecords,
       });
     }
     if (request.method === 'POST' && request.url === '/v1/send') {
@@ -438,8 +753,9 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.headersTimeout = 10_000;
-server.requestTimeout = 30_000;
+server.requestTimeout = toPositiveInt(process.env.REQUEST_TIMEOUT_MS, 60_000);
 server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = toPositiveInt(process.env.MAX_HEADERS_COUNT, 48);
 server.maxConnections = toPositiveInt(process.env.MAX_CONNECTIONS, 100);
 server.maxRequestsPerSocket = toPositiveInt(process.env.MAX_REQUESTS_PER_SOCKET, 100);
 
@@ -450,6 +766,7 @@ if (process.env.RELAY_NO_LISTEN !== 'true') {
 }
 
 function shutdown() {
+  compactReceiptStore(true);
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10_000).unref();
 }
@@ -457,4 +774,16 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-export { normalizeAddress, normalizeDomain, normalizeMessage, server };
+export {
+  normalizeAddress,
+  normalizeDomain,
+  normalizeMessage,
+  rememberCompletedRequest,
+  rememberPendingRequest,
+  releasePendingRequest,
+  receiptCapacityAvailable,
+  receiptRecordCount,
+  relayHealth,
+  server,
+  uncertainRequests,
+};

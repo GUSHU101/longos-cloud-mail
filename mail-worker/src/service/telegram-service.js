@@ -84,13 +84,14 @@ const telegramService = {
 						reply_markup: {
 							inline_keyboard: inlineKeyboard
 						}
-					})
+					}),
+					signal: AbortSignal.timeout(10_000)
 				});
 				if (!res.ok) {
-					console.error(`转发 Telegram 失败 status: ${res.status} response: ${await res.text()}`);
+					console.error(`转发 Telegram 失败 status: ${res.status}`);
 				}
-			} catch (e) {
-				console.error(`转发 Telegram 失败:`, e.message);
+			} catch {
+				console.error('转发 Telegram 失败');
 			}
 		}));
 

@@ -16,6 +16,7 @@ import {useSettingStore} from "@/store/setting.js";
 import {computed, onBeforeUnmount, onMounted, watch} from "vue";
 import { useRoute } from 'vue-router'
 import { hasPerm } from "@/perm/perm.js"
+import {sanitizeNoticeHtml} from "@/utils/html-sanitizer.js";
 
 const settingStore = useSettingStore()
 const uiStore = useUiStore();
@@ -23,6 +24,7 @@ const route = useRoute()
 let  innerWidth =  window.innerWidth
 
 let elNotification = null
+let noticeStyleElement = null
 
 const accountShow = computed(() => {
   return uiStore.accountShow && settingStore.settings.manyEmail === 0
@@ -60,22 +62,32 @@ function showNotice(data) {
     elNotification.close()
   }
 
-  const style = document.createElement('style');
-  style.innerHTML = `
+  const numericWidth = Number(data.noticeWidth)
+  const noticeWidth = Number.isFinite(numericWidth) ? Math.min(1200, Math.max(240, numericWidth)) : 400
+  const numericDuration = Number(data.noticeDuration)
+  const noticeDuration = Number.isFinite(numericDuration) ? Math.min(3600000, Math.max(0, numericDuration)) : 0
+  const numericOffset = Number(data.noticeOffset)
+  const noticeOffset = Number.isFinite(numericOffset) ? Math.min(1000, Math.max(0, numericOffset)) : 0
+  const allowedTypes = new Set(['', 'none', 'success', 'warning', 'info', 'error'])
+  const allowedPositions = new Set(['top-right', 'top-left', 'bottom-right', 'bottom-left'])
+
+  if (!noticeStyleElement) {
+    noticeStyleElement = document.createElement('style')
+    document.head.appendChild(noticeStyleElement)
+  }
+  noticeStyleElement.textContent = `
   .custom-notice.el-notification {
-    --el-notification-width: min(${data.noticeWidth}px,calc(100% - 30px)) !important;
+    --el-notification-width: min(${noticeWidth}px,calc(100% - 30px)) !important;
   }
   `;
 
-  document.head.appendChild(style);
-
   elNotification = ElNotification({
-    title: data.noticeTitle,
-    message: `<div style="width: 100%;height: 100%;">${data.noticeContent}</div>`,
-    type: data.noticeType === 'none' ? '' : data.noticeType,
-    duration: data.noticeDuration,
-    position: data.noticePosition,
-    offset: data.noticeOffset,
+    title: String(data.noticeTitle || '').slice(0, 200),
+    message: sanitizeNoticeHtml(data.noticeContent),
+    type: allowedTypes.has(data.noticeType) && data.noticeType !== 'none' ? data.noticeType : '',
+    duration: noticeDuration,
+    position: allowedPositions.has(data.noticePosition) ? data.noticePosition : 'top-right',
+    offset: noticeOffset,
     dangerouslyUseHTMLString: true,
     customClass: 'custom-notice'
   })
@@ -88,6 +100,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  elNotification?.close()
+  noticeStyleElement?.remove()
+  noticeStyleElement = null
 })
 
 const handleResize = () => {

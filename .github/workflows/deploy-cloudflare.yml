@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  Deploy-cloud-mail:
-    name: 🏗️ Build and Deploy
+  deploy-cloud-mail:
+    name: 🏗️ Validate, test and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -40,8 +40,10 @@ jobs:
       CLOUDFLARE_EMAIL: ${{ secrets.CF_EMAIL || vars.CF_EMAIL || false }}
       ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || false }}
       LONGOS_RELAY_URL: ${{ secrets.LONGOS_RELAY_URL || vars.LONGOS_RELAY_URL }}
+      LONGOS_INTEGRATION_TOKEN: ${{ secrets.LONGOS_INTEGRATION_TOKEN }}
       RELAY_SHARED_SECRET: ${{ secrets.RELAY_SHARED_SECRET }}
       RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+      CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || vars.CORS_ORIGINS || '[]' }}
 
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
@@ -55,314 +57,20 @@ jobs:
       - name: ⚙ 设置 pnpm / Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 11
+          version: 11.25.0
 
       - name: ⚙ 设置 Node.js / Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "22"
           cache: "pnpm"
-          cache-dependency-path: "./mail-worker/pnpm-lock.yaml"
+          cache-dependency-path: |
+            ./mail-worker/pnpm-lock.yaml
+            ./mail-vue/pnpm-lock.yaml
 
-      - name: 📦 安装依赖 / Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: ./mail-worker
-
-      - name: 🧪 发布前测试与依赖审计 / Test and audit before deployment
-        working-directory: ./mail-worker
-        run: |
-          pnpm audit --prod --audit-level moderate
-          pnpm run test:unit
-
-      - name: 📡 禁用 Wrangler 遥测 / Disable wrangler telemetry
-        working-directory: ./mail-worker
-        run: pnpm wrangler telemetry disable
-
-      - name: 🛠️ 设置环境 / Set up environment
-        working-directory: ./mail-worker
-        run: |
-
-          echo "🔐 Starting environment setup..."
-
-          if [[ ! "$JWT_SECRET" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
-            echo "❌ JWT_SECRET must contain at least 32 URL-safe characters."
-            exit 1
-          fi
-
-          if ! jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9]+([.-][A-Za-z0-9]+)*$"))' <<< "$DOMAIN" >/dev/null; then
-            echo "❌ DOMAIN must be a non-empty JSON array of ASCII domain names."
-            exit 1
-          fi
-
-          if [[ ! "$ADMIN" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9]+([.-][A-Za-z0-9]+)+$ ]]; then
-            echo "❌ ADMIN must be a valid mailbox address."
-            exit 1
-          fi
-
-          ADMIN_DOMAIN="${ADMIN##*@}"
-          if ! jq -e --arg admin_domain "${ADMIN_DOMAIN,,}" 'map(ascii_downcase) | index($admin_domain) != null' <<< "$DOMAIN" >/dev/null; then
-            echo "❌ ADMIN must use one of the domains configured in DOMAIN."
-            exit 1
-          fi
-
-          if [[ ! "$NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
-            echo "❌ NAME must use lowercase letters, numbers, underscores, or hyphens."
-            exit 1
-          fi
-
-          if [[ ! "$D1_DATABASE_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
-            echo "❌ D1_DATABASE_NAME must use lowercase letters, numbers, underscores, or hyphens."
-            exit 1
-          fi
-
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "❌ CLOUDFLARE_ACCOUNT_ID variable cannot be empty."
-            exit 1
-          elif [[ ! "$CLOUDFLARE_ACCOUNT_ID" =~ ^[A-Fa-f0-9]{32}$ ]]; then
-            echo "❌ CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal ID."
-            exit 1
-          fi
-
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "❌ CLOUDFLARE_API_TOKEN variable cannot be empty."
-            exit 1
-          fi
-
-          if [ -n "$CUSTOM_DOMAIN" ] && [[ ! "$CUSTOM_DOMAIN" =~ ^[A-Za-z0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
-            echo "❌ CUSTOM_DOMAIN must be a domain name without a protocol or path."
-            exit 1
-          elif [ -z "$CUSTOM_DOMAIN" ]; then
-            echo "::warning:: CUSTOM_DOMAIN variable is not set."
-          fi
-
-          if [ -n "$R2_BUCKET_NAME" ] && [[ ! "$R2_BUCKET_NAME" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
-            echo "❌ R2_BUCKET_NAME is invalid."
-            exit 1
-          fi
-
-          if [ -n "$D1_DATABASE_ID" ] && [[ ! "$D1_DATABASE_ID" =~ ^[A-Fa-f0-9-]{32,36}$ ]]; then
-            echo "❌ D1_DATABASE_ID is invalid."
-            exit 1
-          fi
-
-          if [ -n "$KV_NAMESPACE_ID" ] && [[ ! "$KV_NAMESPACE_ID" =~ ^[A-Fa-f0-9]{32}$ ]]; then
-            echo "❌ KV_NAMESPACE_ID must be a 32-character hexadecimal ID."
-            exit 1
-          fi
-
-          if [ -n "$PROJECT_LINK" ] && [[ ! "$PROJECT_LINK" =~ ^https://[A-Za-z0-9./?_=:%#-]+$ ]]; then
-            echo "❌ PROJECT_LINK must be a safe HTTPS URL."
-            exit 1
-          fi
-
-          if [[ ! "$AI_MODEL" =~ ^[@A-Za-z0-9._/-]+$ ]]; then
-            echo "❌ AI_MODEL contains invalid characters."
-            exit 1
-          fi
-
-          if [[ ! "${ANALYSIS_CACHE,,}" =~ ^(true|false)$ ]]; then
-            echo "❌ ANALYSIS_CACHE must be true or false."
-            exit 1
-          fi
-
-          if [[ ! "${CLOUDFLARE_EMAIL,,}" =~ ^(true|false)$ ]]; then
-            echo "❌ CLOUDFLARE_EMAIL must be true or false."
-            exit 1
-          fi
-
-          if [ -n "$LONGOS_RELAY_URL" ]; then
-            if [[ ! "$LONGOS_RELAY_URL" =~ ^https://[A-Za-z0-9.-]+(/[_A-Za-z0-9./-]*)?$ ]]; then
-              echo "❌ LONGOS_RELAY_URL must be a safe HTTPS URL."
-              exit 1
-            fi
-            if [ ${#RELAY_SHARED_SECRET} -lt 32 ]; then
-              echo "❌ RELAY_SHARED_SECRET must contain at least 32 characters when LONGOS_RELAY_URL is configured."
-              exit 1
-            fi
-          fi
-
-          if [ -n "$RESEND_WEBHOOK_SECRET" ] && [[ ! "$RESEND_WEBHOOK_SECRET" =~ ^whsec_[A-Za-z0-9_+/=-]{16,}$ ]]; then
-            echo "❌ RESEND_WEBHOOK_SECRET must be the signing secret issued by Resend (whsec_...)."
-            exit 1
-          fi
-
-          CONFIG_FILE="wrangler-action.toml"
-
-          if [ -z "$R2_BUCKET_NAME" ]; then
-            sed -i '/\[\[r2_buckets\]\]/,/^$/d' "$CONFIG_FILE"
-          fi
-
-          if [ -z "$PROJECT_LINK" ]; then
-            sed -i '/^project_link = /d' "$CONFIG_FILE"
-          fi
-
-          if [ -z "$CUSTOM_DOMAIN" ]; then
-            sed -i '/\[\[routes\]\]/,/^$/d' "$CONFIG_FILE"
-          fi
-
-          if [ "$(printf '%s' "$CLOUDFLARE_EMAIL" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-            cat >> "$CONFIG_FILE" <<'EOF'
-
-          [[send_email]]
-          name = "email"
-          EOF
-          fi
-
-          sed -i "s|\${NAME}|${NAME}|g" "$CONFIG_FILE"
-          sed -i "s|\${D1_DATABASE_NAME}|${D1_DATABASE_NAME}|g" "$CONFIG_FILE"
-          sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
-          sed -i "s|\"\${DOMAIN}\"|${DOMAIN}|g" "$CONFIG_FILE"
-          sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
-          sed -i "s|\${R2_BUCKET_NAME}|${R2_BUCKET_NAME}|g" "$CONFIG_FILE"
-          sed -i "s|\${PROJECT_LINK}|${PROJECT_LINK}|g" "$CONFIG_FILE"
-          sed -i "s|\${ANALYSIS_CACHE}|${ANALYSIS_CACHE}|g" "$CONFIG_FILE"
-          sed -i "s|\${AI_MODEL}|${AI_MODEL}|g" "$CONFIG_FILE"
-          sed -i "s|\${LONGOS_RELAY_URL}|${LONGOS_RELAY_URL}|g" "$CONFIG_FILE"
-
-          echo "✅ Environment setup completed."
-
-      - name: ⚡ 设置KV数据库 / Set up KV database
-        working-directory: ./mail-worker
-        run: |
-
-          CONFIG_FILE="wrangler-action.toml"
-
-          if [ -n "$KV_NAMESPACE_ID" ]; then
-            sed -i "s|\${KV_NAMESPACE_ID}|${KV_NAMESPACE_ID}|g" "$CONFIG_FILE"
-            echo "✅ Using the database from environment variables."
-            exit 0
-          fi
-
-          echo "🔍 Checking if the database exists..."
-
-          set +e
-            KV_LIST=$(pnpm wrangler kv namespace list 2>&1)
-            STATUS=$?
-          set -e
-
-          if [ $STATUS -ne 0 ]; then
-            echo "$KV_LIST"
-            exit 1
-          fi
-                  
-          if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
-            echo "✅ Database $NAME already exists."
-            KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
-            echo "KV_NAMESPACE_ID: $KV_ID"
-          else
-            echo "⚠️ Database $NAME does not exist. Starting creation..."
-            pnpm wrangler kv namespace create "$NAME"
-            KV_LIST=$(pnpm wrangler kv namespace list)
-            KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
-          fi
-
-          sed -i "s|\${KV_NAMESPACE_ID}|$KV_ID|g" "$CONFIG_FILE"
-          echo "✅ Setup completed."
-
-      - name: 🐬 设置D1数据库 / Set up D1 database
-        working-directory: ./mail-worker
-        run: |
-
-          CONFIG_FILE="wrangler-action.toml"
-
-          if [ -n "$D1_DATABASE_ID" ]; then
-            sed -i "s|\${D1_DATABASE_ID}|${D1_DATABASE_ID}|g" "$CONFIG_FILE"
-            echo "✅ Using the database from environment variables."
-            exit 0
-          fi
-
-          echo "🔍 Checking if the database exists..."
-
-          set +e
-            DB_LIST=$(pnpm wrangler d1 list --json 2>&1)
-            STATUS=$?
-          set -e
-
-          if [ $STATUS -ne 0 ]; then
-            echo "$DB_LIST"
-            exit 1
-          fi
-
-          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$D1_DATABASE_NAME\")" >/dev/null; then
-            echo "✅ Database $D1_DATABASE_NAME already exists."
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$D1_DATABASE_NAME\") | .uuid")
-            echo "D1_DATABASE_ID: $D1_ID"
-          else
-            echo "⚠️ Database $D1_DATABASE_NAME does not exist. Starting creation..."
-            pnpm wrangler d1 create "$D1_DATABASE_NAME"
-            DB_LIST=$(pnpm wrangler d1 list --json)
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$D1_DATABASE_NAME\") | .uuid")
-          fi
-
-          sed -i "s|\${D1_DATABASE_ID}|$D1_ID|g" "$CONFIG_FILE"
-          echo "✅ Setup completed."
-
-      - name: 🚀 开始部署 / Start deployment
+      # Local deployment and GitHub Actions intentionally use the same
+      # validated implementation so resource creation, secrets, migrations
+      # and acceptance checks cannot drift apart.
+      - name: 🚀 一键验证并部署 / Validate and deploy
         id: deploy
-        working-directory: ./mail-worker
-        run: |
-          echo "🚀 Starting deployment..."
-          set +e
-          pnpm wrangler deploy -c wrangler-action.toml 2>&1 \
-            | tee deploy.log \
-            | grep -v "https://.*\.workers\.dev" \
-            | sed -E 's/env\.domain .*/env.domain (***)/'
-          DEPLOY_EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          if [ $DEPLOY_EXIT_CODE -ne 0 ]; then
-            exit 1
-          fi
-
-          WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
-
-          if [ -n "$WORKER_URL" ]; then
-            echo "::add-mask::$WORKER_URL"
-          fi
-
-          echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
-          echo "✅ Setup completed."
-
-      - name: 🔐 配置应用密钥 / Configure application secrets
-        working-directory: ./mail-worker
-        run: |
-          printf '%s' "$JWT_SECRET" | pnpm wrangler secret put jwt_secret -c wrangler-action.toml
-
-      - name: 🔐 配置内置邮件中继密钥 / Configure relay secret
-        if: ${{ env.RELAY_SHARED_SECRET != '' }}
-        working-directory: ./mail-worker
-        run: |
-          printf '%s' "$RELAY_SHARED_SECRET" | pnpm wrangler secret put RELAY_SHARED_SECRET -c wrangler-action.toml
-
-      - name: 🔐 配置 Resend Webhook 签名密钥 / Configure Resend webhook secret
-        if: ${{ env.RESEND_WEBHOOK_SECRET != '' }}
-        working-directory: ./mail-worker
-        run: |
-          printf '%s' "$RESEND_WEBHOOK_SECRET" | pnpm wrangler secret put RESEND_WEBHOOK_SECRET -c wrangler-action.toml
-
-      - name: ♻️ 初始化数据库 / Initialize database
-        run: |
-          echo "🛠️ Starting database initialization..."
-          sleep 15
-
-          WORKER_URL="${CUSTOM_DOMAIN:+https://$CUSTOM_DOMAIN}"
-          WORKER_URL="${WORKER_URL:-${{ steps.deploy.outputs.worker_url }}}"
-
-          if [ -z "$WORKER_URL" ]; then
-            echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
-            exit 1
-          fi
-
-          HTTP_CODE=$(curl --silent --show-error --max-time 30 \
-            --request POST \
-            --header "Authorization: Bearer $JWT_SECRET" \
-            --header "Content-Type: application/json" \
-            --data '{}' \
-            -w "%{http_code}" -o response.txt "$WORKER_URL/api/init")
-          RESPONSE_BODY=$(cat response.txt)
-
-          if [ "$HTTP_CODE" = "200" ] && [ "$RESPONSE_BODY" = "success" ]; then
-            echo "✅ Setup completed."
-          else
-            echo "❌ Failed. HTTP: $HTTP_CODE, Response: $RESPONSE_BODY"
-            exit 1
-          fi
+        run: node scripts/deploy-cloudflare.mjs --from-env

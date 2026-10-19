@@ -16,7 +16,7 @@ function constantTimeEqual(leftValue, rightValue) {
 }
 
 function isAuthorizedInitRequest(c) {
-	const expected = String(c.env.jwt_secret || '');
+	const expected = String(c.env.INIT_SECRET || '');
 	const authorization = String(c.req.header('authorization') || '');
 	const match = authorization.match(/^Bearer ([A-Za-z0-9_-]{32,})$/);
 	return expected.length >= 32 && !!match && constantTimeEqual(match[1], expected);
@@ -37,6 +37,50 @@ async function runIdempotentSchemaStatements(c, statements, label = 'schema') {
 			}
 			throw error;
 		}
+	}
+}
+
+const REQUIRED_SCHEMA = {
+	email: ['email_id', 'user_id', 'account_id', 'recipient', 'cc', 'bcc', 'message_id', 'to_email', 'to_name', 'type', 'status', 'unread', 'code', 'provider', 'provider_message_id'],
+	attachments: ['att_id', 'user_id', 'email_id', 'account_id', 'key', 'status', 'type'],
+	user: ['user_id', 'email', 'password', 'salt', 'status', 'send_count'],
+	account: ['account_id', 'email', 'name', 'user_id', 'all_receive', 'sort'],
+	setting: ['register', 'receive', 'resend_tokens', 'send', 'mail_engine', 'relay_url', 'auto_clean_days', 'webhook_url', 'webhook_secret'],
+	perm: ['perm_id', 'perm_key'],
+	role: ['role_id', 'avail_domain'],
+	role_perm: ['role_id', 'perm_id'],
+	reg_key: ['rege_key_id', 'code'],
+	oauth: ['oauth_id', 'oauth_user_id', 'platform', 'user_id'],
+	verify_record: ['vr_id', 'ip', 'count', 'type'],
+};
+const REQUIRED_INDEXES = ['idx_account_email_nocase', 'idx_user_email_nocase', 'idx_oauth_platform_user'];
+
+async function assertRequiredSchema(c) {
+	const missing = [];
+	for (const [table, requiredColumns] of Object.entries(REQUIRED_SCHEMA)) {
+		const { results = [] } = await c.env.db.prepare(`PRAGMA table_info("${table}")`).all();
+		const columns = new Set(results.map(column => column.name));
+		if (columns.size === 0) {
+			missing.push(`table:${table}`);
+			continue;
+		}
+		for (const column of requiredColumns) {
+			if (!columns.has(column)) missing.push(`column:${table}.${column}`);
+		}
+	}
+
+	const { results: indexRows = [] } = await c.env.db.prepare(
+		"SELECT name FROM sqlite_master WHERE type = 'index'",
+	).all();
+	const indexes = new Set(indexRows.map(row => row.name));
+	for (const index of REQUIRED_INDEXES) {
+		if (!indexes.has(index)) missing.push(`index:${index}`);
+	}
+
+	const settingCount = await c.env.db.prepare('SELECT COUNT(*) AS count FROM setting').first();
+	if (Number(settingCount?.count) !== 1) missing.push('row:setting(singleton)');
+	if (missing.length > 0) {
+		throw new Error(`Database schema verification failed: ${missing.join(', ')}`);
 	}
 }
 
@@ -68,8 +112,29 @@ const dbInit = {
 		await this.v3_2DB(c);
 		await this.v3_3DB(c);
 		await this.v3_4DB(c);
+		await this.v3_5DB(c);
+		await assertRequiredSchema(c);
 		await settingService.refresh(c);
 		return c.text('success', 200, { 'cache-control': 'no-store' });
+	},
+
+	async v3_5DB(c) {
+		await runIdempotentSchemaStatements(c, [
+			`DELETE FROM oauth
+			 WHERE oauth_id IN (
+				 SELECT duplicate.oauth_id
+				 FROM oauth AS duplicate
+				 JOIN oauth AS keeper
+				   ON keeper.platform = duplicate.platform
+				  AND keeper.oauth_user_id = duplicate.oauth_user_id
+				  AND (
+					(keeper.user_id > 0 AND duplicate.user_id <= 0)
+					OR ((keeper.user_id > 0) = (duplicate.user_id > 0) AND keeper.oauth_id < duplicate.oauth_id)
+				  )
+			 )`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_platform_user
+			 ON oauth(platform, oauth_user_id)`,
+		], 'v3.5 OAuth identity');
 	},
 
 	async v3_4DB(c) {
@@ -759,6 +824,7 @@ const dbInit = {
 };
 export {
 	constantTimeEqual,
+	assertRequiredSchema,
 	dbInit,
 	isAuthorizedInitRequest,
 	isIdempotentSchemaError,

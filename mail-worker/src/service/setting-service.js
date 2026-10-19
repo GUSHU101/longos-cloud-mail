@@ -9,7 +9,56 @@ import BizError from '../error/biz-error';
 import {t} from '../i18n/i18n'
 import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
-import domainUtils from '../utils/domain-uitls';
+import { normalizePublicBaseUrl, normalizePublicImageUrl, normalizeWebhookUrl } from '../utils/domain-uitls';
+
+const MAX_BACKGROUND_BYTES = 5 * 1024 * 1024;
+const BACKGROUND_IMAGE_TYPES = new Set([
+	'image/gif',
+	'image/jpeg',
+	'image/png',
+	'image/webp',
+]);
+const MUTABLE_SETTING_FIELDS = new Set([
+	'register', 'receive', 'title', 'manyEmail', 'addEmail', 'autoRefresh',
+	'addEmailVerify', 'registerVerify', 'regVerifyCount', 'addVerifyCount', 'send',
+	'r2Domain', 'secretKey', 'siteKey', 'regKey', 'tgBotToken', 'tgChatId',
+	'tgBotStatus', 'forwardEmail', 'forwardStatus', 'ruleEmail', 'ruleType',
+	'loginOpacity', 'resendTokens', 'mailEngine', 'relayUrl', 'noticeTitle',
+	'noticeContent', 'noticeType', 'noticeDuration', 'noticePosition', 'noticeOffset',
+	'noticeWidth', 'notice', 'noRecipient', 'loginDomain', 'bucket', 'region',
+	'endpoint', 's3AccessKey', 's3SecretKey', 'forcePathStyle', 'customDomain',
+	'tgMsgFrom', 'tgMsgTo', 'tgMsgText', 'minEmailPrefix', 'emailPrefixFilter',
+	'blackSubject', 'blackContent', 'blackFrom', 'aiCode', 'syncDelete',
+	'aiCodeFilter', 'linuxdoClientId', 'linuxdoClientSecret', 'linuxdoSwitch',
+	'githubClientId', 'githubClientSecret', 'githubSwitch', 'googleClientId',
+	'googleClientSecret', 'googleSwitch', 'autoCleanDays', 'autoCleanExclude',
+	'webhookUrl', 'webhookStatus', 'webhookRetry', 'webhookSecret',
+]);
+const BOOLEAN_SETTING_FIELDS = [
+	'register', 'receive', 'manyEmail', 'addEmail', 'addEmailVerify', 'registerVerify',
+	'send', 'regKey', 'tgBotStatus', 'forwardStatus', 'notice', 'noRecipient',
+	'loginDomain', 'forcePathStyle', 'aiCode', 'syncDelete', 'linuxdoSwitch',
+	'githubSwitch', 'googleSwitch', 'webhookStatus',
+];
+
+const SENSITIVE_SETTING_FIELDS = [
+	'secretKey',
+	'tgBotToken',
+	's3AccessKey',
+	's3SecretKey',
+	'linuxdoClientSecret',
+	'githubClientSecret',
+	'googleClientSecret',
+	'webhookSecret',
+];
+
+function isMaskedSecret(value) {
+	return typeof value === 'string' && value.endsWith('******');
+}
+
+function maskSecret(value, visible = 6) {
+	return value ? `${String(value).slice(0, visible)}******` : null;
+}
 
 function normalizeRelayUrl(value) {
 	const normalized = String(value || '').trim().replace(/\/+$/, '');
@@ -40,11 +89,25 @@ function buildPublicSetting(settingRow) {
 	};
 }
 
+function parseResendTokens(value) {
+	if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
+	try {
+		const parsed = JSON.parse(value || '{}');
+		return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+	} catch {
+		throw new BizError('Stored Resend token configuration is invalid');
+	}
+}
+
 const settingService = {
 	applyRuntimeMailDefaults(c, settingRow) {
 		const runtimeSetting = { ...settingRow };
 		const longosRelayUrl = normalizeRelayUrl(c.env.longos_relay_url);
-		if (!runtimeSetting.relayUrl && longosRelayUrl) {
+		if (c.env.LONGOS_INTEGRATION_TOKEN) {
+			// A bearer credential must never be redirected to an administrator-
+			// supplied host. Pin its destination to the deployment variable.
+			runtimeSetting.relayUrl = longosRelayUrl;
+		} else if (!runtimeSetting.relayUrl && longosRelayUrl) {
 			runtimeSetting.relayUrl = longosRelayUrl;
 		}
 		return runtimeSetting;
@@ -52,7 +115,7 @@ const settingService = {
 
 	async refresh(c) {
 		const settingRow = await orm(c).select().from(setting).get();
-		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
+		settingRow.resendTokens = parseResendTokens(settingRow.resendTokens);
 		c.set('setting', this.applyRuntimeMailDefaults(c, settingRow));
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
 	},
@@ -85,7 +148,10 @@ const settingService = {
 			throw new BizError(t('noDomainVariable'));
 		}
 
-		domainList = domainList.map(item => '@' + item);
+		if (!Array.isArray(domainList) || !domainList.length || domainList.some(item => typeof item !== 'string' || !/^[A-Za-z0-9.-]+$/.test(item))) {
+			throw new BizError(t('notJsonDomain'));
+		}
+		domainList = [...new Set(domainList.map(item => item.trim().toLowerCase()).filter(Boolean))].map(item => '@' + item);
 		setting.domainList = domainList;
 
 		let projectLink = c.env.project_link;
@@ -99,7 +165,8 @@ const settingService = {
 
 		setting.projectLink = projectLink;
 
-		setting.emailPrefixFilter = setting.emailPrefixFilter.split(",").filter(Boolean);
+		setting.emailPrefixFilter = String(setting.emailPrefixFilter || '').split(",").filter(Boolean);
+		setting.resendTokens = parseResendTokens(setting.resendTokens);
 
 		c.set?.('setting', setting);
 		return setting;
@@ -118,18 +185,26 @@ const settingService = {
 			settingRow.siteKey = settingRow.siteKey ? `${settingRow.siteKey.slice(0, 6)}******` : null;
 		}
 
-		settingRow.secretKey = settingRow.secretKey ? `${settingRow.secretKey.slice(0, 6)}******` : null;
+		settingRow.secretKey = maskSecret(settingRow.secretKey);
 
 		Object.keys(settingRow.resendTokens).forEach(key => {
 			settingRow.resendTokens[key] = `${settingRow.resendTokens[key].slice(0, 12)}******`;
 		});
 
-		settingRow.s3AccessKey = settingRow.s3AccessKey ? `${settingRow.s3AccessKey.slice(0, 12)}******` : null;
-		settingRow.s3SecretKey = settingRow.s3SecretKey ? `${settingRow.s3SecretKey.slice(0, 12)}******` : null;
-		settingRow.tgBotToken = settingRow.tgBotToken ? `${settingRow.tgBotToken.slice(0, 20)}******` : null;
+		settingRow.s3AccessKey = maskSecret(settingRow.s3AccessKey, 12);
+		settingRow.s3SecretKey = maskSecret(settingRow.s3SecretKey, 12);
+		settingRow.tgBotToken = maskSecret(settingRow.tgBotToken, 20);
+		settingRow.linuxdoClientSecret = maskSecret(settingRow.linuxdoClientSecret);
+		settingRow.githubClientSecret = maskSecret(settingRow.githubClientSecret);
+		settingRow.googleClientSecret = maskSecret(settingRow.googleClientSecret);
+		settingRow.webhookSecret = maskSecret(settingRow.webhookSecret);
 		settingRow.hasR2 = !!c.env.r2
 		settingRow.hasCfEmail = !!c.env.email
-		settingRow.hasRelaySecret = !!c.env.RELAY_SHARED_SECRET
+		settingRow.hasRelayCredential = !!(c.env.LONGOS_INTEGRATION_TOKEN || c.env.RELAY_SHARED_SECRET)
+		settingRow.relayAuthMode = c.env.LONGOS_INTEGRATION_TOKEN ? 'integration_token' : (c.env.RELAY_SHARED_SECRET ? 'legacy_hmac' : '')
+		// Retain the old response field for one release so cached frontends do
+		// not incorrectly report an incomplete relay during a rolling deploy.
+		settingRow.hasRelaySecret = settingRow.hasRelayCredential
 
 		let regVerifyOpen = false
 		let addVerifyOpen = false
@@ -152,6 +227,11 @@ const settingService = {
 	},
 
 	async set(c, params) {
+		if (!params || typeof params !== 'object' || Array.isArray(params)) {
+			throw new BizError('Invalid settings payload');
+		}
+		params = Object.fromEntries(Object.entries(params).filter(([key]) => MUTABLE_SETTING_FIELDS.has(key)));
+		if (!Object.keys(params).length) throw new BizError('No supported settings were provided');
 		const settingData = await this.query(c);
 		const allowedMailEngines = ['auto', 'cloudflare', 'resend', 'self_hosted'];
 		if (params.mailEngine !== undefined && !allowedMailEngines.includes(params.mailEngine)) {
@@ -159,8 +239,97 @@ const settingService = {
 		}
 		if (params.relayUrl !== undefined) {
 			params.relayUrl = normalizeRelayUrl(params.relayUrl);
+			if (c.env.LONGOS_INTEGRATION_TOKEN) {
+				const trustedRelayUrl = normalizeRelayUrl(c.env.longos_relay_url);
+				if (params.relayUrl !== trustedRelayUrl) {
+					throw new BizError('LONGOS relay URL is managed by the deployment configuration');
+				}
+			}
 		}
-		let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
+		for (const field of SENSITIVE_SETTING_FIELDS) {
+			if (params[field] === undefined) continue;
+			if (params[field] === null || isMaskedSecret(params[field])) {
+				delete params[field];
+				continue;
+			}
+			if (typeof params[field] !== 'string' || params[field].length > 4096 || /[\u0000\r\n]/.test(params[field])) {
+				throw new BizError(`Invalid ${field}`);
+			}
+		}
+		for (const field of BOOLEAN_SETTING_FIELDS) {
+			if (params[field] === undefined) continue;
+			const value = Number(params[field]);
+			if (!Number.isInteger(value) || ![0, 1].includes(value)) throw new BizError(`Invalid ${field}`);
+			params[field] = value;
+		}
+		const boundedIntegers = {
+			autoRefresh: [0, 86400],
+			regVerifyCount: [1, 1000],
+			addVerifyCount: [1, 1000],
+			noticeDuration: [0, 3600000],
+			noticeOffset: [0, 1000],
+			noticeWidth: [240, 1200],
+			minEmailPrefix: [0, 64],
+			autoCleanDays: [0, 3650],
+		};
+		for (const [field, [minimum, maximum]] of Object.entries(boundedIntegers)) {
+			if (params[field] === undefined) continue;
+			const value = Number(params[field]);
+			if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+				throw new BizError(`Invalid ${field}`);
+			}
+			params[field] = value;
+		}
+		if (params.loginOpacity !== undefined) {
+			const opacity = Number(params.loginOpacity);
+			if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) throw new BizError('Invalid loginOpacity');
+			params.loginOpacity = opacity;
+		}
+		if (params.noticeTitle !== undefined && (typeof params.noticeTitle !== 'string' || params.noticeTitle.length > 200)) {
+			throw new BizError('Invalid noticeTitle');
+		}
+		if (params.noticeContent !== undefined && (typeof params.noticeContent !== 'string' || params.noticeContent.length > 50000)) {
+			throw new BizError('Invalid noticeContent');
+		}
+		if (params.noticeType !== undefined && !['', 'none', 'success', 'warning', 'info', 'error'].includes(params.noticeType)) {
+			throw new BizError('Invalid noticeType');
+		}
+		if (params.noticePosition !== undefined && !['', 'top-right', 'top-left', 'bottom-right', 'bottom-left'].includes(params.noticePosition)) {
+			throw new BizError('Invalid noticePosition');
+		}
+		if (params.title !== undefined && (typeof params.title !== 'string' || params.title.length > 100)) {
+			throw new BizError('Invalid title');
+		}
+		for (const [field, value] of Object.entries(params)) {
+			if (typeof value === 'string' && (value.length > 50000 || /\u0000/.test(value))) {
+				throw new BizError(`Invalid ${field}`);
+			}
+		}
+		for (const field of ['r2Domain', 'endpoint', 'customDomain']) {
+			if (params[field] === undefined) continue;
+			try {
+				params[field] = normalizePublicBaseUrl(params[field], field);
+			} catch (error) {
+				throw new BizError(error.message);
+			}
+		}
+
+		const incomingTokens = params.resendTokens && typeof params.resendTokens === 'object' && !Array.isArray(params.resendTokens)
+			? params.resendTokens
+			: {};
+		let resendTokens = { ...settingData.resendTokens };
+		for (const [domain, token] of Object.entries(incomingTokens)) {
+			if (typeof domain !== 'string' || domain.length > 253 || !/^[A-Za-z0-9.-]+$/.test(domain)) {
+				throw new BizError('Invalid Resend token domain');
+			}
+			if (isMaskedSecret(token)) continue;
+			if (typeof token !== 'string' || token.length > 512 || /[\u0000\r\n]/.test(token)) {
+				throw new BizError('Invalid Resend token');
+			}
+			const normalizedDomain = domain.toLowerCase();
+			if (normalizedDomain !== domain) delete resendTokens[domain];
+			resendTokens[normalizedDomain] = token;
+		}
 		Object.keys(resendTokens).forEach(domain => {
 			if (!resendTokens[domain]) delete resendTokens[domain];
 		});
@@ -174,7 +343,18 @@ const settingService = {
 		}
 
 		if (params.webhookUrl !== undefined) {
-			params.webhookUrl = domainUtils.toOssDomain(params.webhookUrl) || '';
+			try {
+				params.webhookUrl = normalizeWebhookUrl(params.webhookUrl);
+			} catch (error) {
+				throw new BizError(error.message);
+			}
+		}
+		if (params.webhookRetry !== undefined) {
+			const retry = Number(params.webhookRetry);
+			if (!Number.isSafeInteger(retry) || retry < 0 || retry > 3) {
+				throw new BizError('Webhook retry count must be between 0 and 3');
+			}
+			params.webhookRetry = retry;
 		}
 
 		params.resendTokens = JSON.stringify(resendTokens);
@@ -188,49 +368,97 @@ const settingService = {
 		const { background } = await this.query(c);
 		if (!background) return
 
-		if (background.startsWith('http')) {
-			await orm(c).update(setting).set({ background: '' }).run();
-			await this.refresh(c)
-			return;
-		}
+		await orm(c).update(setting).set({ background: '' }).run();
+		await this.refresh(c)
 
-		if (background) {
-			await r2Service.delete(c,background)
-			await orm(c).update(setting).set({ background: '' }).run();
-			await this.refresh(c)
+		if (!/^https?:\/\//i.test(background)) {
+			try {
+				await r2Service.delete(c, background)
+			} catch (error) {
+				console.error('Unable to remove the previous background object', error)
+			}
 		}
 	},
 
 	async setBackground(c, params) {
+		if (!params || typeof params !== 'object' || Array.isArray(params) || typeof params.background !== 'string') {
+			throw new BizError('Invalid background payload');
+		}
 
-		let { background } = params
+		const currentBackground = (await this.query(c)).background || '';
+		const input = params.background.trim();
+		let background = '';
+		let uploadedKey = '';
 
-		await this.deleteBackground(c);
-
-		if (background && !background.startsWith('http')) {
-
-			const file = fileUtils.base64ToFile(background)
+		if (/^https?:\/\//i.test(input)) {
+			try {
+				background = normalizePublicImageUrl(input);
+			} catch (error) {
+				throw new BizError(error.message);
+			}
+		} else if (input) {
+			if (input.length > Math.ceil(MAX_BACKGROUND_BYTES * 4 / 3) + 1024) {
+				throw new BizError('Background image must not exceed 5 MB');
+			}
+			let file;
+			try {
+				file = fileUtils.base64ToFile(input)
+			} catch {
+				throw new BizError('Invalid background image data');
+			}
+			if (!BACKGROUND_IMAGE_TYPES.has(file.type)) {
+				throw new BizError('Background image must be PNG, JPEG, GIF, or WebP');
+			}
+			if (file.size <= 0 || file.size > MAX_BACKGROUND_BYTES) {
+				throw new BizError('Background image must not exceed 5 MB');
+			}
 
 			const arrayBuffer = await file.arrayBuffer();
 			background = constant.BACKGROUND_PREFIX + await fileUtils.getBuffHash(arrayBuffer) + fileUtils.getExtFileName(file.name);
-
+			uploadedKey = background;
 
 			await r2Service.putObj(c, background, arrayBuffer, {
 				contentType: file.type,
 				cacheControl: `public, max-age=31536000, immutable`,
 				contentDisposition: `inline; filename="${file.name}"`
 			});
-
 		}
 
-		await orm(c).update(setting).set({ background }).run();
-		await this.refresh(c);
+		try {
+			await orm(c).update(setting).set({ background }).run();
+			await this.refresh(c);
+		} catch (error) {
+			if (uploadedKey) {
+				try {
+					await r2Service.delete(c, uploadedKey)
+				} catch (cleanupError) {
+					console.error('Unable to roll back the uploaded background object', cleanupError)
+				}
+			}
+			throw error;
+		}
+
+		if (currentBackground && currentBackground !== background && !/^https?:\/\//i.test(currentBackground)) {
+			try {
+				await r2Service.delete(c, currentBackground)
+			} catch (error) {
+				console.error('Unable to remove the previous background object', error)
+			}
+		}
 		return background;
 	},
 
 
 	async setBlacklist(c, params) {
-		const { blackSubject, blackContent, blackFrom  } = params
+		if (!params || typeof params !== 'object' || Array.isArray(params)) {
+			throw new BizError('Invalid blacklist payload');
+		}
+		const { blackSubject = '', blackContent = '', blackFrom = '' } = params
+		for (const [field, value] of Object.entries({blackSubject, blackContent, blackFrom})) {
+			if (typeof value !== 'string' || value.length > 10000 || /\u0000/.test(value)) {
+				throw new BizError(`Invalid ${field}`);
+			}
+		}
 		await orm(c).update(setting).set({ blackSubject, blackContent, blackFrom }).run();
 		await this.refresh(c);
 		return this.get(c);
@@ -280,5 +508,5 @@ const settingService = {
 
 };
 
-export { buildPublicSetting, normalizeRelayUrl };
+export { buildPublicSetting, isMaskedSecret, maskSecret, normalizeRelayUrl, parseResendTokens };
 export default settingService;

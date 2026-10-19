@@ -206,11 +206,11 @@
                   </el-select>
                 </div>
               </div>
-              <div class="setting-item" v-if="setting.mailEngine === 'self_hosted'">
+              <div class="setting-item" v-if="setting.mailEngine === 'auto' || setting.mailEngine === 'self_hosted'">
                 <div><span>{{ $t('selfHostedRelay') }}</span></div>
                 <div>
-                  <el-tag :type="setting.relayUrl && setting.hasRelaySecret ? 'success' : 'danger'">
-                    {{ setting.relayUrl && setting.hasRelaySecret ? $t('configured') : $t('notConfigured') }}
+                  <el-tag :type="setting.relayUrl && setting.hasRelayCredential ? 'success' : 'danger'">
+                    {{ setting.relayUrl && setting.hasRelayCredential ? $t('configured') : $t('notConfigured') }}
                   </el-tag>
                   <el-button class="opt-button" style="margin: 0 0 0 8px" @click="openSelfHostedRelay" size="small"
                              type="primary">
@@ -547,15 +547,34 @@
                  @closed="relayUrlInput = setting.relayUrl || ''">
         <form @submit.prevent>
           <el-input type="url" placeholder="https://shop.example.com/_longos/mail-relay" v-model="relayUrlInput"
+                    :disabled="setting.relayAuthMode === 'integration_token'"
                     @keyup.enter="saveSelfHostedRelay"/>
           <el-alert
               style="margin-top: 15px"
               :title="$t('relaySecretDesc')"
-              :type="setting.hasRelaySecret ? 'success' : 'warning'"
+              :type="setting.hasRelayCredential ? 'success' : 'warning'"
               :closable="false"
               show-icon
           />
-          <el-button type="primary" :loading="settingLoading" @click="saveSelfHostedRelay">{{ $t('save') }}</el-button>
+          <div v-if="setting.relayAuthMode === 'integration_token'" class="form-tip" style="margin-top: 10px">
+            {{ $t('relayUrlManaged') }}
+          </div>
+          <el-alert
+              v-if="relayHealthStatus"
+              style="margin-top: 12px"
+              :title="relayHealthStatus === 'ok' ? $t('relayHealthOk') : $t('relayHealthReachable')"
+              type="success"
+              :closable="false"
+              show-icon
+          />
+          <div style="display: flex; gap: 10px; margin-top: 15px">
+            <el-button v-if="setting.relayAuthMode !== 'integration_token'" type="primary" :loading="settingLoading" @click="saveSelfHostedRelay">{{ $t('save') }}</el-button>
+            <el-button
+                :loading="relayHealthLoading"
+                :disabled="!setting.relayUrl || !setting.hasRelayCredential"
+                @click="testSelfHostedRelay"
+            >{{ $t('testRelay') }}</el-button>
+          </div>
         </form>
       </el-dialog>
       <el-dialog v-model="r2DomainShow" :title="$t('addOsDomain')" width="340"
@@ -728,7 +747,7 @@
           <el-input :placeholder="$t('webhookSecret')" v-model="webhookSecret" @keyup.enter="webhookSave"></el-input>
           <div class="tg-msg-label">
             <span>{{ t('webhookRetry') }}</span>
-            <el-input-number v-model="webhookRetry" :min="0" :max="5" controls-position="right"/>
+			<el-input-number v-model="webhookRetry" :min="0" :max="3" controls-position="right"/>
           </div>
           <div v-show="webhookFormatShow" class="webhook-format">
             <pre>Content-Type: application/json
@@ -975,7 +994,7 @@ Authorization: &lt;secret&gt;</pre>
 
 <script setup>
 import {computed, defineOptions, nextTick, reactive, ref} from "vue";
-import {deleteBackground, setBackground, setBlackList, settingQuery, settingSet} from "@/request/setting.js";
+import {deleteBackground, relayHealth, setBackground, setBlackList, settingQuery, settingSet} from "@/request/setting.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useUiStore} from "@/store/ui.js";
 import {useUserStore} from "@/store/user.js";
@@ -995,7 +1014,7 @@ defineOptions({
   name: 'sys-setting'
 })
 
-const currentVersion = 'v4.2.0'
+const currentVersion = 'v4.4.0'
 const hasUpdate = ref(false)
 let getUpdateErrorCount = 1;
 const {t, locale} = useI18n();
@@ -1028,6 +1047,8 @@ const settingLoading = ref(false)
 const clearS3Loading = ref(false)
 const r2DomainInput = ref('')
 const relayUrlInput = ref('')
+const relayHealthLoading = ref(false)
+const relayHealthStatus = ref('')
 const loginOpacity = ref(0)
 const minEmailPrefix = ref(0)
 const emailPrefixFilter = ref([])
@@ -1304,7 +1325,7 @@ function resetNoticeForm() {
 
 function saveNoticePopup() {
   noticeForm.noticeOffset = noticeForm.noticeOffset || 0
-  noticeForm.noticeWidth = noticeForm.noticeWidth || 0
+  noticeForm.noticeWidth = noticeForm.noticeWidth || 400
   noticeForm.noticeDuration = noticeForm.noticeDuration || 0
   editSetting({...noticeForm})
 }
@@ -1647,13 +1668,18 @@ async function saveBackground() {
   if (localUpShow.value) {
     image = await fileToBase64(backgroundFile, true);
   } else {
-    if (backgroundUrl.value && !backgroundUrl.value.startsWith('http')) {
-      ElMessage({
-        message: t('imageLinkErrorMsg'),
-        type: "error",
-        plain: true
-      })
-      return
+    if (backgroundUrl.value) {
+      try {
+        const imageUrl = new URL(backgroundUrl.value)
+        if (imageUrl.protocol !== 'https:' || imageUrl.username || imageUrl.password || imageUrl.hash) throw new Error()
+      } catch {
+        ElMessage({
+          message: t('imageLinkErrorMsg'),
+          type: "error",
+          plain: true
+        })
+        return
+      }
     }
     image = backgroundUrl.value
   }
@@ -1702,11 +1728,24 @@ function openResendForm() {
 
 function openSelfHostedRelay() {
   relayUrlInput.value = setting.value.relayUrl || ''
+  relayHealthStatus.value = ''
   selfHostedRelayShow.value = true
 }
 
 function saveSelfHostedRelay() {
   editSetting({relayUrl: relayUrlInput.value.trim()})
+}
+
+function testSelfHostedRelay() {
+  if (relayHealthLoading.value) return
+  relayHealthLoading.value = true
+  relayHealthStatus.value = ''
+  relayHealth().then((health) => {
+    relayHealthStatus.value = health?.status || 'reachable'
+    ElMessage({message: t('relayHealthOk'), type: 'success', plain: true})
+  }).finally(() => {
+    relayHealthLoading.value = false
+  })
 }
 
 function openBlackListForm() {

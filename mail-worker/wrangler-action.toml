@@ -32,7 +32,7 @@ not_found_handling = "single-page-application"
 run_worker_first = true
 
 [triggers]
-crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生效
+crons = ["0 * * * *", "30 * * * *"] #整点维护；半点仅刷新分析缓存
 
 
 [vars]
@@ -43,6 +43,4 @@ domain = "${DOMAIN}"
 admin = "${ADMIN}"
 project_link = "${PROJECT_LINK}"
 longos_relay_url = "${LONGOS_RELAY_URL}"
-
-[build]
-command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"
+cors_origins = "${CORS_ORIGINS}"

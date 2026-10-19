@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	constantTimeEqual,
+	assertRequiredSchema,
 	isAuthorizedInitRequest,
 	runIdempotentSchemaStatements,
 } from '../src/init/init';
 
 function context(secret, authorization) {
 	return {
-		env: { jwt_secret: secret },
+		env: { INIT_SECRET: secret },
 		req: { header: name => name === 'authorization' ? authorization : '' },
 	};
 }
@@ -62,5 +63,21 @@ describe('database initialization authorization', () => {
 		};
 
 		await expect(runIdempotentSchemaStatements(c, ['statement'])).rejects.toThrow('database unavailable');
+	});
+
+	it('rejects a partially initialized database instead of reporting success', async () => {
+		const c = {
+			env: {
+				db: {
+					prepare: () => ({
+						all: async () => ({ results: [] }),
+						first: async () => ({ count: 0 }),
+					}),
+				},
+			},
+		};
+
+		await expect(assertRequiredSchema(c)).rejects.toThrow(/table:email/);
+		await expect(assertRequiredSchema(c)).rejects.toThrow(/row:setting\(singleton\)/);
 	});
 });

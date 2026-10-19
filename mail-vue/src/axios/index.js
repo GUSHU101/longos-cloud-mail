@@ -9,7 +9,9 @@ let http = axios.create({
 
 http.interceptors.request.use(config => {
     const { lang } = useSettingStore();
-    config.headers.Authorization = `${localStorage.getItem('token')}`
+    const token = localStorage.getItem('token')
+    if (token) config.headers.Authorization = token
+    else delete config.headers.Authorization
     config.headers['accept-language'] = lang
     return config
 })
@@ -48,8 +50,7 @@ http.interceptors.response.use((res) => {
 
             } else if (data.code === 502) {
                 ElMessage({
-                    dangerouslyUseHTMLString: true,
-                    message: data.message,
+                    message: String(data.message || '').replace(/<br\s*\/?\s*>/gi, ' / '),
                     type: 'error',
                     plain: true,
                     grouping: true,

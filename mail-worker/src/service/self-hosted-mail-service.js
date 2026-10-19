@@ -1,8 +1,17 @@
 import BizError from '../error/biz-error';
 
 const encoder = new TextEncoder();
-const RETRYABLE_STATUS = new Set([429, 503, 504]);
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 2;
+
+function integrationToken(c) {
+	const token = String(c.env.LONGOS_INTEGRATION_TOKEN || '').trim();
+	if (!token) return '';
+	if (!/^longos_it_[A-Za-z0-9]{64}$/.test(token)) {
+		throw new BizError('LONGOS_INTEGRATION_TOKEN is invalid');
+	}
+	return token;
+}
 
 function toHex(buffer) {
 	return [...new Uint8Array(buffer)]
@@ -48,15 +57,69 @@ function endpointFor(relayUrl, path = 'v1/send') {
 }
 
 const selfHostedMailService = {
-	async send(c, relayUrl, params) {
-		const secret = c.env.RELAY_SHARED_SECRET;
+	async health(c, relayUrl) {
+		const token = integrationToken(c);
+		const secret = String(c.env.RELAY_SHARED_SECRET || '');
 		if (!relayUrl) {
 			throw new BizError('Self-hosted relay URL is not configured');
 		}
-		if (!secret) {
-			throw new BizError('RELAY_SHARED_SECRET is not configured');
+		if (!token && secret.length < 32) {
+			throw new BizError(secret ? 'RELAY_SHARED_SECRET must contain at least 32 characters' : 'LONGOS_INTEGRATION_TOKEN is not configured');
 		}
-		if (secret.length < 32) {
+
+		const timestamp = Math.floor(Date.now() / 1000).toString();
+		const nonce = crypto.randomUUID();
+		const headers = token
+			? {accept: 'application/json', authorization: `Bearer ${token}`}
+			: {
+				accept: 'application/json',
+				'x-relay-client': 'cloud-mail',
+				'x-relay-timestamp': timestamp,
+				'x-relay-nonce': nonce,
+				'x-relay-signature': await sign(secret, timestamp, nonce, ''),
+			};
+		let response;
+		try {
+			response = await fetch(endpointFor(relayUrl, 'health'), {
+				method: 'GET',
+				headers,
+				redirect: 'manual',
+				signal: AbortSignal.timeout(10_000),
+			});
+		} catch (error) {
+			throw new BizError(`Self-hosted relay is unavailable: ${error.message}`);
+		}
+
+		let body = {};
+		try {
+			body = await response.json();
+		} catch {
+			// Status is reported below without returning an untrusted HTML body.
+		}
+		if (!response.ok) {
+			throw new BizError(body.message || `Self-hosted relay health check failed (${response.status})`);
+		}
+
+		return {
+			status: body.status === 'ok' ? 'ok' : 'reachable',
+			authMode: token ? 'integration_token' : 'legacy_hmac',
+			queueDepth: Number.isSafeInteger(Number(body.queueDepth)) ? Number(body.queueDepth) : null,
+			uncertainRequests: Number.isSafeInteger(Number(body.uncertainRequests)) ? Number(body.uncertainRequests) : null,
+			receiptRecords: Number.isSafeInteger(Number(body.receiptRecords)) ? Number(body.receiptRecords) : null,
+			receiptCapacity: Number.isSafeInteger(Number(body.receiptCapacity)) ? Number(body.receiptCapacity) : null,
+		};
+	},
+
+	async send(c, relayUrl, params) {
+		const token = integrationToken(c);
+		const secret = String(c.env.RELAY_SHARED_SECRET || '');
+		if (!relayUrl) {
+			throw new BizError('Self-hosted relay URL is not configured');
+		}
+		if (!token && !secret) {
+			throw new BizError('LONGOS_INTEGRATION_TOKEN is not configured');
+		}
+		if (!token && secret.length < 32) {
 			throw new BizError('RELAY_SHARED_SECRET must contain at least 32 characters');
 		}
 
@@ -67,20 +130,26 @@ const selfHostedMailService = {
 		for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
 			const timestamp = Math.floor(Date.now() / 1000).toString();
 			const nonce = crypto.randomUUID();
-			const signature = await sign(secret, timestamp, nonce, payload);
+			const signature = token ? '' : await sign(secret, timestamp, nonce, payload);
 			let response;
-
-			try {
-				response = await fetch(endpoint, {
-					method: 'POST',
-					headers: {
-						'content-type': 'application/json',
+			const headers = {
+				'content-type': 'application/json',
+				...(token
+					? {authorization: `Bearer ${token}`}
+					: {
 						'x-relay-client': 'cloud-mail',
 						'x-relay-timestamp': timestamp,
 						'x-relay-nonce': nonce,
 						'x-relay-signature': signature,
-					},
+					}),
+			};
+
+			try {
+				response = await fetch(endpoint, {
+					method: 'POST',
+					headers,
 					body: payload,
+					redirect: 'manual',
 					signal: AbortSignal.timeout(20_000),
 				});
 			} catch (error) {
@@ -114,5 +183,5 @@ const selfHostedMailService = {
 	},
 };
 
-export { endpointFor, sign };
+export { endpointFor, integrationToken, sign };
 export default selfHostedMailService;

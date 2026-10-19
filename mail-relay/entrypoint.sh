@@ -3,6 +3,7 @@ set -eu
 
 : "${MAIL_HOSTNAME:?MAIL_HOSTNAME is required}"
 : "${MAIL_DOMAINS:?MAIL_DOMAINS is required}"
+: "${ALLOWED_SENDER_DOMAINS:?ALLOWED_SENDER_DOMAINS is required}"
 
 if [ -z "${RELAY_SHARED_SECRET:-}" ] \
   && [ -z "${LONGOS_RELAY_SHARED_SECRET:-}" ] \
@@ -13,6 +14,69 @@ fi
 
 DKIM_SELECTOR="${DKIM_SELECTOR:-mail2026}"
 INET_PROTOCOLS="${INET_PROTOCOLS:-ipv4}"
+
+normalize_domain() {
+  node --input-type=module -e '
+    import { domainToASCII } from "node:url";
+    const domain = domainToASCII(String(process.argv[1] || "").trim().toLowerCase().replace(/\.$/, ""));
+    const labels = domain.split(".");
+    if (!domain || domain.length > 253 || labels.length < 2
+      || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) process.exit(1);
+    process.stdout.write(domain);
+  ' "$1"
+}
+
+if ! MAIL_HOSTNAME="$(normalize_domain "$MAIL_HOSTNAME")"; then
+  echo "MAIL_HOSTNAME must be a valid DNS hostname" >&2
+  exit 1
+fi
+if ! printf '%s' "$DKIM_SELECTOR" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$'; then
+  echo "DKIM_SELECTOR contains invalid characters" >&2
+  exit 1
+fi
+case "$INET_PROTOCOLS" in
+  ipv4|ipv6|all) ;;
+  *) echo "INET_PROTOCOLS must be ipv4, ipv6, or all" >&2; exit 1 ;;
+esac
+
+normalize_domain_list() {
+  list="$1"
+  normalized=""
+  old_list_ifs="$IFS"
+  IFS=','
+  for raw_domain in $list; do
+    if ! domain="$(normalize_domain "$raw_domain")"; then
+      echo "Invalid mail domain: $raw_domain" >&2
+      IFS="$old_list_ifs"
+      return 1
+    fi
+    case ",$normalized," in
+      *,$domain,*) ;;
+      *) normalized="${normalized:+$normalized,}$domain" ;;
+    esac
+  done
+  IFS="$old_list_ifs"
+  [ -n "$normalized" ] || return 1
+  printf '%s' "$normalized"
+}
+
+MAIL_DOMAINS="$(normalize_domain_list "$MAIL_DOMAINS")" || exit 1
+ALLOWED_SENDER_DOMAINS="$(normalize_domain_list "$ALLOWED_SENDER_DOMAINS")" || exit 1
+export MAIL_HOSTNAME MAIL_DOMAINS ALLOWED_SENDER_DOMAINS DKIM_SELECTOR INET_PROTOCOLS
+
+old_ifs="$IFS"
+IFS=','
+for allowed_domain in $ALLOWED_SENDER_DOMAINS; do
+  case ",$MAIL_DOMAINS," in
+    *,$allowed_domain,*) ;;
+    *)
+      echo "ALLOWED_SENDER_DOMAINS contains unsigned domain: $allowed_domain" >&2
+      IFS="$old_ifs"
+      exit 1
+      ;;
+  esac
+done
+IFS="$old_ifs"
 
 printf '%s\n' "$MAIL_HOSTNAME" > /etc/mailname
 mkdir -p /run/opendkim /etc/opendkim /var/lib/dkim

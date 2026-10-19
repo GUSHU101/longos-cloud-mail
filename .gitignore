@@ -9,6 +9,9 @@ lerna-debug.log*
 node_modules
 dist-ssr
 *.local
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 dist
 
 .vscode/*
@@ -23,8 +26,12 @@ dist
 
 mail-vue/node_modules
 mail-vue/dist
+mail-vue/auto-imports.d.ts
+mail-vue/components.d.ts
 .wrangler
 mail-worker/wrangler-production.toml
+mail-worker/wrangler.generated.toml
+.cloud-mail.deploy.env
 .venv
 git-tools.js
 /mail-relay/.env

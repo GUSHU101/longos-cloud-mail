@@ -22,6 +22,7 @@ export default defineConfig({
 			'test/session-service.spec.js',
 			'test/setting-service.spec.js',
 			'test/turnstile-service.spec.js',
+			'test/user-service.spec.js',
 		],
 	},
 });

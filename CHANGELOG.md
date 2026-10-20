@@ -5,6 +5,7 @@
 ### Mail reliability and safety
 
 - Made Cloud Mail relay retries idempotent by generating and reusing a stable request ID automatically, preventing duplicate delivery after an accepted response is lost.
+- Preserved the same relay request ID across browser retries, made send-limit reservation atomic under concurrent requests, and released reservations when an internal or rejected delivery fails.
 - Added matching browser and Worker limits for recipients, attachment count and decoded attachment size, plus strict outbound header/body validation and reply ownership checks.
 - Fixed Telegram email preview links with purpose-scoped, seven-day JWTs instead of trying to validate preview tokens as login sessions.
 
@@ -12,6 +13,8 @@
 
 - Added a public, non-sensitive `/api/health` readiness endpoint that verifies the required D1 state and KV binding, and made deployment validate it before and after retiring the initialization secret.
 - Added best-effort `INIT_SECRET` retirement on every post-deployment failure path and stable 404 responses for missing attachment/static objects.
+- Isolated scheduled maintenance tasks so one cleanup failure no longer prevents the remaining recovery, cleanup, analytics, and OAuth jobs from running; failures are still surfaced after all tasks execute.
+- Removed the deprecated Cloudflare Vitest pool that was no longer used by the Node test suite, upgraded the active Worker/frontend toolchain, and pinned patched transitive build dependencies identified by the supply-chain audit.
 
 ## v4.5.0 - 2026-10-20
 

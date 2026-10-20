@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { withObjectSecurityHeaders, withSecurityHeaders } from '../src/index';
+import { describe, expect, it, vi } from 'vitest';
+import { runScheduledTasks, withObjectSecurityHeaders, withSecurityHeaders } from '../src/index';
 
 describe('asset response hardening', () => {
 	it('preserves the response while adding browser security headers', async () => {
@@ -24,5 +24,20 @@ describe('asset response hardening', () => {
 		expect(response.headers.get('cache-control')).toBe('private, no-store');
 		expect(response.headers.get('x-content-type-options')).toBe('nosniff');
 		expect(await response.text()).toBe('Not Found');
+	});
+});
+
+describe('scheduled task isolation', () => {
+	it('continues later maintenance after a task fails and reports the aggregate failure', async () => {
+		const completed = [];
+		const logger = { error: vi.fn() };
+		await expect(runScheduledTasks([
+			['first', async () => { throw new Error('first failed'); }],
+			['second', async () => { completed.push('second'); }],
+			['third', async () => { throw new Error('third failed'); }],
+		], logger)).rejects.toThrow('2 scheduled task(s) failed');
+
+		expect(completed).toEqual(['second']);
+		expect(logger.error).toHaveBeenCalledTimes(2);
 	});
 });

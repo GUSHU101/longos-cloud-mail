@@ -316,12 +316,23 @@ const userService = {
 
 	},
 
-	async incrUserSendCount(c, quantity, userId) {
-		await orm(c).update(user).set({
-			sendCount: sql`${user.sendCount}
-	  +
-	  ${quantity}`
-		}).where(eq(user.userId, userId)).run();
+	async reserveUserSendCount(c, quantity, userId, limit) {
+		const reserved = await c.env.db.prepare(`
+			UPDATE user
+			SET send_count = CAST(send_count AS INTEGER) + ?
+			WHERE user_id = ?
+			  AND CAST(send_count AS INTEGER) + ? <= ?
+			RETURNING send_count
+		`).bind(quantity, userId, quantity, limit).first();
+		return reserved !== null && reserved !== undefined;
+	},
+
+	async releaseUserSendCount(c, quantity, userId) {
+		await c.env.db.prepare(`
+			UPDATE user
+			SET send_count = MAX(0, CAST(send_count AS INTEGER) - ?)
+			WHERE user_id = ?
+		`).bind(quantity, userId).run();
 	},
 
 	async updateAllUserType(c, type, curType) {

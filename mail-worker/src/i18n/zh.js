@@ -31,6 +31,7 @@ const zh = {
 	imageAttLimit: '图片不能超过10个',
 	attLimit: '附件不能超过10个',
 	invalidRecipientList: '至少需要一个有效的收件邮箱',
+	invalidRequestId: '发送请求标识格式不正确',
 	invalidAttachmentList: '附件必须使用列表格式',
 	recipientLimit: '单封邮件最多允许 50 个收件人',
 	invalidAttachment: '附件格式不正确',

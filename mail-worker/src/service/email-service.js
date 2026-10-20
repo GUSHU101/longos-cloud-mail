@@ -35,6 +35,19 @@ const MAX_SUBJECT_LENGTH = 998;
 const MAX_SENDER_NAME_LENGTH = 200;
 const MAX_TEXT_LENGTH = 1_000_000;
 const MAX_HTML_LENGTH = 2_000_000;
+const MAX_OUTBOUND_REQUEST_ID_LENGTH = 128;
+
+function normalizeOutboundRequestId(requestId) {
+	if (requestId === undefined || requestId === null || requestId === '') {
+		return `cloud-mail:${crypto.randomUUID()}`;
+	}
+	if (typeof requestId !== 'string'
+		|| requestId.length > MAX_OUTBOUND_REQUEST_ID_LENGTH
+		|| !/^[A-Za-z0-9._:-]+$/.test(requestId)) {
+		throw new BizError(t('invalidRequestId'));
+	}
+	return requestId;
+}
 
 function validateSendInput(receiveEmail, attachments) {
 	if (!Array.isArray(receiveEmail) || receiveEmail.length === 0) {
@@ -351,9 +364,11 @@ const emailService = {
 			text, //邮件纯文本
 			content, //邮件内容
 			subject, //邮件标题
+			requestId, //客户端发送尝试标识，失败重试时保持不变
 			attachments = [] //附件
 		} = params || {};
 		receiveEmail = validateSendInput(receiveEmail, attachments);
+		requestId = normalizeOutboundRequestId(requestId);
 		validateSendMessageFields({ name, subject, text, content });
 
 		const { resendTokens, r2Domain, send, domainList, mailEngine = 'auto', relayUrl } = await settingService.query(c);
@@ -470,7 +485,25 @@ const emailService = {
 
 		}
 
+		const shouldTrackSendQuota = c.env.admin !== userRow.email
+			&& roleRow.sendCount
+			&& roleRow.sendType !== 'internal';
+		let quotaReserved = false;
+		if (shouldTrackSendQuota) {
+			quotaReserved = await userService.reserveUserSendCount(
+				c,
+				receiveEmail.length,
+				userId,
+				roleRow.sendCount,
+			);
+			if (!quotaReserved) {
+				if (roleRow.sendType === 'day') throw new BizError(t('daySendLack'), 403);
+				if (roleRow.sendType === 'count') throw new BizError(t('totalSendLack'), 403);
+			}
+		}
+
 		let sendResult = {};
+		try {
 
 		//站外收件人通过管理员选择的发信引擎投递。
 		if (!allInternal) {
@@ -485,7 +518,8 @@ const emailService = {
 				html,
 				attachments: [...imageDataList, ...attachments],
 				sendType,
-				messageId: emailRow.messageId
+				messageId: emailRow.messageId,
+				requestId,
 			};
 
 			if (selectedProvider === 'cloudflare') {
@@ -542,11 +576,6 @@ const emailService = {
 			emailData.relation = emailRow.messageId;
 		}
 
-		//如果权限有发送次数增加用户发送次数
-		if (roleRow.sendCount && roleRow.sendType !== 'internal') {
-			await userService.incrUserSendCount(c, receiveEmail.length, userId);
-		}
-
 		//保存到数据库并返回结果
 		const emailResult = await orm(c).insert(email).values(emailData).returning().get();
 
@@ -567,6 +596,10 @@ const emailService = {
 		if (allInternal) {
 			await this.HandleOnSiteEmail(c, receiveEmail, emailResult, attList);
 		}
+		// The quota is committed only after delivery and the local message record
+		// are both complete. This lets a relay-idempotent retry consume the quota
+		// exactly once if persistence fails after the relay accepted the message.
+		quotaReserved = false;
 
 		const dateStr = dayjs().format('YYYY-MM-DD');
 		let daySendTotal = await c.env.kv.get(kvConst.SEND_DAY_COUNT + dateStr);
@@ -580,6 +613,20 @@ const emailService = {
 		}
 
 		return [ emailResult ];
+		} catch (error) {
+			if (quotaReserved) {
+				try {
+					await userService.releaseUserSendCount(c, receiveEmail.length, userId);
+				} catch (releaseError) {
+					console.error('Failed to release reserved outbound quota', {
+						userId,
+						quantity: receiveEmail.length,
+						error: releaseError,
+					});
+				}
+			}
+			throw error;
+		}
 	},
 
 	async sendByCloudflareEmail(c, params) {
@@ -648,7 +695,7 @@ const emailService = {
 		}
 
 		return selfHostedMailService.send(c, relayUrl, {
-			requestId: crypto.randomUUID(),
+			requestId: params.requestId,
 			from: {
 				address: params.accountEmail,
 				name: params.name,
@@ -1341,5 +1388,6 @@ export {
 	validateSendAttachments,
 	validateSendInput,
 	validateSendMessageFields,
+	normalizeOutboundRequestId,
 };
 export default emailService;

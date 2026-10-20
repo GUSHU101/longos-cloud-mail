@@ -14,8 +14,8 @@ const user = sqliteTable('user', {
 	os: text('os'),
 	browser: text('browser'),
 	device: text('device'),
-	sort: text('sort').default(0),
-	sendCount: text('send_count').default(0),
+	sort: integer('sort').default(0).notNull(),
+	sendCount: integer('send_count').default(0).notNull(),
 	regKeyId: integer('reg_key_id').default(0).notNull(),
 	isDel: integer('is_del').default(0).notNull()
 });

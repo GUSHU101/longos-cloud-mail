@@ -195,6 +195,7 @@ describe('self-hosted relay signing', () => {
 			{ env: { RELAY_SHARED_SECRET: secret } },
 			'https://relay.example.com',
 			{
+				requestId: 'cloud-mail-ui:retry-123',
 				userId: 'user-7',
 				accountId: 'account-9',
 				accountEmail: 'sales@example.com',
@@ -210,5 +211,6 @@ describe('self-hosted relay signing', () => {
 		);
 
 		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).requestId).toBe('cloud-mail-ui:retry-123');
 	});
 });

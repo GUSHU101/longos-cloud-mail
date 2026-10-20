@@ -5,6 +5,7 @@ import {
 	validateSendAttachments,
 	validateSendInput,
 	validateSendMessageFields,
+	normalizeOutboundRequestId,
 } from '../src/service/email-service';
 
 const validAttachment = () => ({
@@ -73,5 +74,17 @@ describe('outbound message field validation', () => {
 
 	it('requires non-empty content', () => {
 		expect(() => validateSendMessageFields({ name: '', subject: '', text: '', content: '' })).toThrow();
+	});
+});
+
+describe('outbound request identity', () => {
+	it('preserves a valid browser request ID across retries', () => {
+		expect(normalizeOutboundRequestId('cloud-mail-ui:550e8400-e29b-41d4-a716-446655440000'))
+			.toBe('cloud-mail-ui:550e8400-e29b-41d4-a716-446655440000');
+	});
+
+	it('generates an ID when absent and rejects unsafe values', () => {
+		expect(normalizeOutboundRequestId()).toMatch(/^cloud-mail:/);
+		expect(() => normalizeOutboundRequestId('bad id with spaces')).toThrow();
 	});
 });

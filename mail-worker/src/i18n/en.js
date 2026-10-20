@@ -31,6 +31,7 @@ const en = {
 	imageAttLimit: 'The maximum number of image attachments is 10',
 	attLimit: 'The maximum number of attachments is 10.',
 	invalidRecipientList: 'At least one valid recipient email is required',
+	invalidRequestId: 'The send request ID is invalid',
 	invalidAttachmentList: 'Attachments must be provided as a list',
 	recipientLimit: 'A message can contain at most 50 recipients',
 	invalidAttachment: 'An attachment is malformed',

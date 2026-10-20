@@ -160,6 +160,7 @@ const form = reactive({
   emailId: 0,
   attachments: [],
   draftId: null,
+  requestId: '',
 })
 
 const selectRecipientList = ref([])
@@ -388,6 +389,10 @@ async function sendEmail() {
 
   show.value = false
 
+  if (!form.requestId) {
+    form.requestId = `cloud-mail-ui:${crypto.randomUUID()}`
+  }
+
   emailSend(form, (e) => {
     percent.value = e.total ? Math.round((e.loaded * 98) / e.total) : 0
   }).then(emailList => {
@@ -454,6 +459,7 @@ function resetForm() {
   form.sendType = ''
   form.emailId = 0
   form.draftId = null
+  form.requestId = ''
   backReply.content = ''
   backReply.subject = ''
   backReply.receiveEmail = []
@@ -623,6 +629,7 @@ function close() {
     const formData = {...toRaw(form)};
     delete formData.draftId
     delete formData.attachments
+    delete formData.requestId
     formData.createTime = dayjs().utc().format('YYYY-MM-DD HH:mm:ss');
     const draftId = await db.value.draft.add({...formData})
     db.value.att.add({draftId, attachments: toRaw(form.attachments)})

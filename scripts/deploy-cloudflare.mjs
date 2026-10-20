@@ -403,14 +403,42 @@ if (!publicCheck.ok) fail(`Worker 初始化完成，但公开配置验收失败�
 // INIT_SECRET is single-use deployment authority. Remove it after the schema
 // has passed final verification so a leaked historical value is useless.
 wrangler(['secret', 'delete', 'INIT_SECRET', '-c', generatedConfig], { env: deploymentEnv, input: 'y\n' });
-const retiredInitCheck = await fetch(`${workerUrl}/api/init`, {
-  method: 'POST',
-  headers: { authorization: `Bearer ${initSecret}`, 'content-type': 'application/json' },
-  body: '{}',
-  redirect: 'manual',
-  signal: AbortSignal.timeout(20_000),
-});
-if (retiredInitCheck.status !== 401) fail(`INIT_SECRET 撤销验收失败（HTTP ${retiredInitCheck.status}）。`);
+const secretsAfterRetirement = await workerSecretNames(config, deploymentEnv);
+if (secretsAfterRetirement.has('INIT_SECRET')) fail('Cloudflare Secret 列表中仍存在 INIT_SECRET，撤销没有完成。');
+
+// `wrangler secret delete` creates and deploys a new Worker version, but edge
+// isolates do not all switch versions at the exact instant the command exits.
+// Poll a no-side-effect authorization probe instead of treating the first
+// response from a still-warm old isolate as a failed deployment.
+let initSecretRetired = false;
+const retirementAttempts = 24;
+for (let attempt = 1; attempt <= retirementAttempts; attempt += 1) {
+  try {
+    const retiredInitCheck = await fetch(
+      `${workerUrl}/api/init?authorization_probe=1&nonce=${randomBytes(8).toString('hex')}`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${initSecret}`,
+          'cache-control': 'no-store',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    if (retiredInitCheck.status === 401) {
+      initSecretRetired = true;
+      break;
+    }
+    console.log(`等待 INIT_SECRET 撤销传播 ${attempt}/${retirementAttempts}：HTTP ${retiredInitCheck.status}`);
+  } catch (error) {
+    console.log(`等待 INIT_SECRET 撤销传播 ${attempt}/${retirementAttempts}：${error.message}`);
+  }
+  if (attempt < retirementAttempts) await new Promise(resolveDelay => setTimeout(resolveDelay, 5_000));
+}
+if (!initSecretRetired) fail('INIT_SECRET 已从 Cloudflare 配置删除，但边缘运行时在两分钟内仍未完成撤销传播。可安全重跑工作流。');
 publicCheck = await fetch(`${workerUrl}/api/setting/websiteConfig`, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
 if (!publicCheck.ok) fail(`撤销一次性密钥后公开配置验收失败（HTTP ${publicCheck.status}）。`);
 

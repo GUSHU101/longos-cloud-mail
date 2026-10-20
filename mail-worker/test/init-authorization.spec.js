@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	constantTimeEqual,
 	assertRequiredSchema,
+	dbInit,
 	isAuthorizedInitRequest,
+	isInitAuthorizationProbe,
 	runIdempotentSchemaStatements,
 } from '../src/init/init';
 
@@ -24,6 +26,31 @@ describe('database initialization authorization', () => {
 	it('fails closed when the configured secret is missing or too short', () => {
 		expect(isAuthorizedInitRequest(context('', 'Bearer 0123456789abcdef0123456789abcdef'))).toBe(false);
 		expect(isAuthorizedInitRequest(context('short', 'Bearer short'))).toBe(false);
+	});
+
+	it('recognizes only the explicit authorization-only probe', () => {
+		expect(isInitAuthorizationProbe({ req: { query: name => name === 'authorization_probe' ? '1' : undefined } })).toBe(true);
+		expect(isInitAuthorizationProbe({ req: { query: () => '0' } })).toBe(false);
+		expect(isInitAuthorizationProbe({ req: {} })).toBe(false);
+	});
+
+	it('handles an authorized probe without touching the database', async () => {
+		const secret = '0123456789abcdef0123456789abcdef';
+		const response = await dbInit.init({
+			env: { INIT_SECRET: secret },
+			req: {
+				header: name => name === 'authorization' ? `Bearer ${secret}` : '',
+				query: name => name === 'authorization_probe' ? '1' : undefined,
+			},
+			body: (body, status, headers) => ({ body, status, headers }),
+			text: (body, status, headers) => ({ body, status, headers }),
+		});
+
+		expect(response).toEqual({
+			body: null,
+			status: 204,
+			headers: { 'cache-control': 'no-store' },
+		});
 	});
 
 	it('compares values without accepting unequal lengths', () => {

@@ -22,6 +22,10 @@ function isAuthorizedInitRequest(c) {
 	return expected.length >= 32 && !!match && constantTimeEqual(match[1], expected);
 }
 
+function isInitAuthorizationProbe(c) {
+	return c.req.query?.('authorization_probe') === '1';
+}
+
 function isIdempotentSchemaError(error) {
 	return /duplicate column name|already exists/i.test(String(error?.message || ''));
 }
@@ -88,6 +92,12 @@ const dbInit = {
 	async init(c) {
 		if (!isAuthorizedInitRequest(c)) {
 			return c.text('Unauthorized', 401, { 'cache-control': 'no-store' });
+		}
+		// Deployment uses this lightweight request while Cloudflare propagates
+		// INIT_SECRET removal. Never repeat every migration merely to prove that
+		// the old one-time credential has stopped authorizing requests.
+		if (isInitAuthorizationProbe(c)) {
+			return c.body(null, 204, { 'cache-control': 'no-store' });
 		}
 
 		await this.intDB(c);
@@ -827,6 +837,7 @@ export {
 	assertRequiredSchema,
 	dbInit,
 	isAuthorizedInitRequest,
+	isInitAuthorizationProbe,
 	isIdempotentSchemaError,
 	runIdempotentSchemaStatements,
 };

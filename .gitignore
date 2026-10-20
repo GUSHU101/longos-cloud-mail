@@ -29,6 +29,7 @@ mail-vue/dist
 mail-vue/auto-imports.d.ts
 mail-vue/components.d.ts
 .wrangler
+.tmp-worker-dry-run/
 mail-worker/wrangler-production.toml
 mail-worker/wrangler.generated.toml
 .cloud-mail.deploy.env

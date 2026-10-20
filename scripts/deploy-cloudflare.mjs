@@ -18,8 +18,18 @@ const corepackCommand = process.platform === 'win32' ? 'corepack.cmd' : 'corepac
 const hasDirectPnpm = spawnSync(directPnpmCommand, ['--version'], { windowsHide: true }).status === 0;
 const pnpmCommand = hasDirectPnpm ? directPnpmCommand : corepackCommand;
 const pnpmPrefix = hasDirectPnpm ? [] : ['pnpm'];
+let failureCleanup = null;
 
 function fail(message) {
+	if (failureCleanup) {
+		const cleanup = failureCleanup;
+		failureCleanup = null;
+		try {
+			cleanup();
+		} catch (error) {
+			console.error(`[清理失败] ${error.message}`);
+		}
+	}
   console.error(`\n[失败] ${message}`);
   process.exit(1);
 }
@@ -366,6 +376,21 @@ const workersDevUrl = deployment.stdout.match(/https:\/\/[^\s]+\.workers\.dev/)?
 const workerUrl = config.CUSTOM_DOMAIN ? `https://${config.CUSTOM_DOMAIN}` : workersDevUrl;
 if (!workerUrl) fail('无法从 Wrangler 输出确定 Worker URL；请配置 CUSTOM_DOMAIN。');
 
+// From this point onward the deployed Worker contains a temporary, privileged
+// initialization secret. Any later failure must retire it before the process
+// exits so a failed acceptance check never leaves deployment authority online.
+failureCleanup = () => {
+	console.error('\n[清理] 部署未完成，正在撤销一次性 INIT_SECRET。');
+	const cleanup = wrangler(['secret', 'delete', 'INIT_SECRET', '-c', generatedConfig], {
+		env: deploymentEnv,
+		input: 'y\n',
+		allowFailure: true,
+	});
+	if (cleanup.status !== 0) {
+		console.error(`[清理失败] INIT_SECRET 撤销命令退出码 ${cleanup.status}；请立即重跑工作流或在 Cloudflare 删除该 Secret。`);
+	}
+};
+
 console.log('\n[7/8] 撤销配置中已停用的旧 Worker Secret');
 const configuredOptionalSecrets = {
   LONGOS_INTEGRATION_TOKEN: config.LONGOS_INTEGRATION_TOKEN,
@@ -397,6 +422,10 @@ for (let attempt = 1; attempt <= 12; attempt += 1) {
   await new Promise(resolveDelay => setTimeout(resolveDelay, 10_000));
 }
 if (!initialized) fail('Worker 已发布，但自定义域或数据库初始化在两分钟内未就绪。可直接重跑同一命令。');
+let readinessCheck = await fetchJson(`${workerUrl}/api/health`);
+if (!readinessCheck.response.ok || readinessCheck.body.status !== 'ok') {
+  fail(`Worker 初始化完成，但 D1/KV 就绪验收失败（HTTP ${readinessCheck.response.status}）。`);
+}
 let publicCheck = await fetch(`${workerUrl}/api/setting/websiteConfig`, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
 if (!publicCheck.ok) fail(`Worker 初始化完成，但公开配置验收失败（HTTP ${publicCheck.status}）。`);
 
@@ -405,6 +434,7 @@ if (!publicCheck.ok) fail(`Worker 初始化完成，但公开配置验收失败�
 wrangler(['secret', 'delete', 'INIT_SECRET', '-c', generatedConfig], { env: deploymentEnv, input: 'y\n' });
 const secretsAfterRetirement = await workerSecretNames(config, deploymentEnv);
 if (secretsAfterRetirement.has('INIT_SECRET')) fail('Cloudflare Secret 列表中仍存在 INIT_SECRET，撤销没有完成。');
+failureCleanup = null;
 
 // `wrangler secret delete` creates and deploys a new Worker version, but edge
 // isolates do not all switch versions at the exact instant the command exits.
@@ -439,6 +469,10 @@ for (let attempt = 1; attempt <= retirementAttempts; attempt += 1) {
   if (attempt < retirementAttempts) await new Promise(resolveDelay => setTimeout(resolveDelay, 5_000));
 }
 if (!initSecretRetired) fail('INIT_SECRET 已从 Cloudflare 配置删除，但边缘运行时在两分钟内仍未完成撤销传播。可安全重跑工作流。');
+readinessCheck = await fetchJson(`${workerUrl}/api/health`);
+if (!readinessCheck.response.ok || readinessCheck.body.status !== 'ok') {
+  fail(`撤销一次性密钥后 D1/KV 就绪验收失败（HTTP ${readinessCheck.response.status}）。`);
+}
 publicCheck = await fetch(`${workerUrl}/api/setting/websiteConfig`, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
 if (!publicCheck.ok) fail(`撤销一次性密钥后公开配置验收失败（HTTP ${publicCheck.status}）。`);
 

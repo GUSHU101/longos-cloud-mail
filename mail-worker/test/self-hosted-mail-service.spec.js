@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import emailService from '../src/service/email-service';
-import selfHostedMailService, { endpointFor, integrationToken, sign } from '../src/service/self-hosted-mail-service';
+import selfHostedMailService, { endpointFor, integrationToken, relayRequestId, sign } from '../src/service/self-hosted-mail-service';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -39,6 +39,12 @@ describe('self-hosted relay signing', () => {
 			'https://relay.example.com',
 			{ subject: 'hello' },
 		)).rejects.toThrow('at least 32 characters');
+	});
+
+	it('generates a relay-safe request ID and rejects malformed caller IDs', () => {
+		expect(relayRequestId()).toMatch(/^cloud-mail:[0-9a-f-]{36}$/);
+		expect(relayRequestId('caller:stable-1')).toBe('caller:stable-1');
+		expect(() => relayRequestId('contains spaces')).toThrow('request ID is invalid');
 	});
 
 	it('prefers a scoped LONGOS integration token without exposing HMAC headers', async () => {
@@ -106,7 +112,8 @@ describe('self-hosted relay signing', () => {
 				.update(`${timestamp}.${nonce}.${options.body}`)
 				.digest('hex');
 			expect(options.headers['x-relay-signature']).toBe(expected);
-			expect(JSON.parse(options.body)).toEqual(payload);
+			expect(JSON.parse(options.body)).toMatchObject(payload);
+			expect(JSON.parse(options.body).requestId).toMatch(/^cloud-mail:/);
 			return new Response(JSON.stringify({ accepted: true, queueId: 'queue-123' }), {
 				status: 202,
 				headers: { 'content-type': 'application/json' },
@@ -146,6 +153,27 @@ describe('self-hosted relay signing', () => {
 		expect(attempts[0].body).toBe(attempts[1].body);
 		expect(attempts[0].nonce).not.toBe(attempts[1].nonce);
 		expect(result).toEqual({ data: { id: 'stable-request-id' } });
+	});
+
+	it('automatically reuses the generated request ID across retry attempts', async () => {
+		const secret = '0123456789abcdef0123456789abcdef';
+		const bodies = [];
+		const fetchMock = vi.fn(async (_url, options) => {
+			bodies.push(JSON.parse(options.body));
+			if (bodies.length === 1) throw new Error('connection reset after submission');
+			return new Response(JSON.stringify({ accepted: true, queueId: bodies[0].requestId }), { status: 202 });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		await selfHostedMailService.send(
+			{ env: { RELAY_SHARED_SECRET: secret } },
+			'https://relay.example.com',
+			{ subject: 'retry-safe' },
+		);
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(bodies[0].requestId).toMatch(/^cloud-mail:/);
+		expect(bodies[1]).toEqual(bodies[0]);
 	});
 
 	it('binds the selected account and user to the signed relay context', async () => {

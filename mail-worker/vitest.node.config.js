@@ -10,6 +10,7 @@ export default defineConfig({
 			'test/domain-utils.spec.js',
 			'test/html-sanitizer.spec.js',
 			'test/email-service.spec.js',
+			'test/health-api.spec.js',
 			'test/init-authorization.spec.js',
 			'test/index.spec.js',
 			'test/jwt-utils.spec.js',

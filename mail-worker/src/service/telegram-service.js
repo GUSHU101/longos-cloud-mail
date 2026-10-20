@@ -14,15 +14,18 @@ import emailHtmlTemplate from '../template/email-html';
 import verifyUtils from '../utils/verify-utils';
 import domainUtils from "../utils/domain-uitls";
 
+const TELEGRAM_EMAIL_TOKEN_SCOPE = 'telegram_email';
+const TELEGRAM_EMAIL_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+
 const telegramService = {
 
 	async getEmailContent(c, params) {
 
 		const { token } = params
 
-		const result = await jwtUtils.verifyToken(c, token);
+		const result = await jwtUtils.verifyScopedToken(c, token, TELEGRAM_EMAIL_TOKEN_SCOPE);
 
-		if (!result) {
+		if (!result || !Number.isSafeInteger(result.emailId) || result.emailId < 1) {
 			return emailTextTemplate('Access denied')
 		}
 
@@ -49,7 +52,12 @@ const telegramService = {
 
 		const tgChatIds = tgChatId.split(',');
 
-		const jwtToken = await jwtUtils.generateToken(c, { emailId: email.emailId })
+		const jwtToken = await jwtUtils.generateScopedToken(
+			c,
+			TELEGRAM_EMAIL_TOKEN_SCOPE,
+			{ emailId: email.emailId },
+			TELEGRAM_EMAIL_TOKEN_TTL_SECONDS,
+		)
 
 		const webAppUrl = customDomain ? `${domainUtils.toOssDomain(customDomain)}/api/telegram/getEmail/${jwtToken}` : 'https://www.cloudflare.com/404'
 		const inlineKeyboard = [
@@ -99,4 +107,5 @@ const telegramService = {
 
 }
 
+export { TELEGRAM_EMAIL_TOKEN_SCOPE, TELEGRAM_EMAIL_TOKEN_TTL_SECONDS };
 export default telegramService

@@ -22,6 +22,16 @@ function withSecurityHeaders(response) {
 	});
 }
 
+function withObjectSecurityHeaders(response) {
+	return withSecurityHeaders(response || new Response('Not Found', {
+		status: 404,
+		headers: {
+			'cache-control': 'private, no-store',
+			'content-type': 'text/plain; charset=utf-8',
+		},
+	}));
+}
+
 export default {
 	 async fetch(req, env, ctx) {
 
@@ -34,7 +44,7 @@ export default {
 		}
 
 		 if (['/static/','/attachments/'].some(p => url.pathname.startsWith(p))) {
-			 return withSecurityHeaders(await kvObjService.toObjResp( { env }, url.pathname.substring(1)));
+			 return withObjectSecurityHeaders(await kvObjService.toObjResp( { env }, url.pathname.substring(1)));
 		 }
 
 		return withSecurityHeaders(await env.assets.fetch(req));
@@ -55,4 +65,4 @@ export default {
 	},
 };
 
-export { withSecurityHeaders };
+export { withObjectSecurityHeaders, withSecurityHeaders };

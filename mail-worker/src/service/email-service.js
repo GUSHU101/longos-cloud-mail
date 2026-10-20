@@ -27,21 +27,93 @@ import selfHostedMailService from './self-hosted-mail-service';
 import { selectExternalMailProvider } from './mail-provider';
 import verifyUtils from '../utils/verify-utils';
 
+const MAX_SEND_RECIPIENTS = 50;
+const MAX_SEND_ATTACHMENTS = 10;
+const MAX_INLINE_IMAGES = 10;
+const MAX_OUTBOUND_ATTACHMENT_BYTES = 18 * 1024 * 1024;
+const MAX_SUBJECT_LENGTH = 998;
+const MAX_SENDER_NAME_LENGTH = 200;
+const MAX_TEXT_LENGTH = 1_000_000;
+const MAX_HTML_LENGTH = 2_000_000;
+
 function validateSendInput(receiveEmail, attachments) {
-	if (!Array.isArray(receiveEmail) || receiveEmail.length === 0 || receiveEmail.some(item => !verifyUtils.isEmail(item))) {
+	if (!Array.isArray(receiveEmail) || receiveEmail.length === 0) {
 		throw new BizError(t('invalidRecipientList'));
 	}
 	if (!Array.isArray(attachments)) {
 		throw new BizError(t('invalidAttachmentList'));
 	}
+	const recipients = [...new Set(receiveEmail.map(item => emailUtils.normalizeAddress(item)))];
+	if (recipients.some(item => !verifyUtils.isEmail(item))) {
+		throw new BizError(t('invalidRecipientList'));
+	}
+	if (recipients.length > MAX_SEND_RECIPIENTS) {
+		throw new BizError(t('recipientLimit'));
+	}
+	return recipients;
+}
+
+function attachmentByteLength(attachment, index) {
+	if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+		throw new BizError(t('invalidAttachment'));
+	}
+	for (const [field, maximum] of [['filename', 255], ['contentType', 200], ['mimeType', 200], ['type', 200]]) {
+		if (attachment[field] === undefined) continue;
+		if (typeof attachment[field] !== 'string'
+			|| attachment[field].length > maximum
+			|| /[\u0000-\u001f\u007f]/.test(attachment[field])) {
+			throw new BizError(t('invalidAttachment'));
+		}
+	}
+
+	let content = attachment.content;
+	if (content instanceof ArrayBuffer) return content.byteLength;
+	if (content instanceof Uint8Array) return content.byteLength;
+	if (typeof content !== 'string') throw new BizError(t('invalidAttachment'));
+	if (content.startsWith('data:')) {
+		if (!/^data:[^;,\s]+;base64,/i.test(content)) throw new BizError(t('invalidAttachment'));
+		content = content.slice(content.indexOf(',') + 1);
+	}
+	const encoded = content.replace(/\s+/g, '');
+	if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
+		throw new BizError(`${t('invalidAttachment')} (${index + 1})`);
+	}
+	const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+	return encoded.length / 4 * 3 - padding;
 }
 
 function validateSendAttachments(imageDataList, attachments) {
-	if (imageDataList.length > 10) {
+	if (imageDataList.length > MAX_INLINE_IMAGES) {
 		throw new BizError(t('imageAttLimit'));
 	}
-	if (attachments.length > 10) {
+	if (attachments.length > MAX_SEND_ATTACHMENTS) {
 		throw new BizError(t('attLimit'));
+	}
+	const totalBytes = [...imageDataList, ...attachments]
+		.reduce((total, attachment, index) => total + attachmentByteLength(attachment, index), 0);
+	if (totalBytes > MAX_OUTBOUND_ATTACHMENT_BYTES) {
+		throw new BizError(t('attachmentSizeLimit'), 413);
+	}
+	return totalBytes;
+}
+
+function validateSendMessageFields({ name, subject, text, content }) {
+	if (name !== undefined && (typeof name !== 'string'
+		|| name.length > MAX_SENDER_NAME_LENGTH
+		|| /[\u0000-\u001f\u007f]/.test(name))) {
+		throw new BizError(t('senderNameLengthLimit'));
+	}
+	if (typeof subject !== 'string' || subject.length > MAX_SUBJECT_LENGTH || /[\r\n]/.test(subject)) {
+		throw new BizError(t('subjectLengthLimit'));
+	}
+	if ((text !== undefined && typeof text !== 'string')
+		|| (content !== undefined && typeof content !== 'string')
+		|| String(text || '').length > MAX_TEXT_LENGTH
+		|| String(content || '').length > MAX_HTML_LENGTH) {
+		throw new BizError(t('messageSizeLimit'), 413);
+	}
+	if (!String(text || '').trim() && !String(content || '').trim()) {
+		throw new BizError(t('emptyMessageContent'));
 	}
 }
 
@@ -280,8 +352,9 @@ const emailService = {
 			content, //邮件内容
 			subject, //邮件标题
 			attachments = [] //附件
-		} = params;
-		validateSendInput(receiveEmail, attachments);
+		} = params || {};
+		receiveEmail = validateSendInput(receiveEmail, attachments);
+		validateSendMessageFields({ name, subject, text, content });
 
 		const { resendTokens, r2Domain, send, domainList, mailEngine = 'auto', relayUrl } = await settingService.query(c);
 
@@ -389,7 +462,7 @@ const emailService = {
 		//如果是回复邮件
 		if (sendType === 'reply') {
 
-			emailRow = await this.selectById(c, emailId);
+			emailRow = await this.selectByIdForUser(c, emailId, userId);
 
 			if (!emailRow) {
 				throw new BizError(t('notExistEmailReply'));
@@ -900,6 +973,16 @@ const emailService = {
 			.get();
 	},
 
+	selectByIdForUser(c, emailId, userId) {
+		return orm(c).select().from(email).where(
+			and(
+				eq(email.emailId, emailId),
+				eq(email.userId, userId),
+				eq(email.isDel, isDel.NORMAL),
+			)
+		).get();
+	},
+
 	async latest(c, params, userId) {
 		let { emailId, accountId, allReceive } = params;
 		allReceive = Number(allReceive);
@@ -1245,5 +1328,18 @@ const emailService = {
 	}
 };
 
-export { validateSendAttachments, validateSendInput };
+export {
+	MAX_HTML_LENGTH,
+	MAX_INLINE_IMAGES,
+	MAX_OUTBOUND_ATTACHMENT_BYTES,
+	MAX_SEND_ATTACHMENTS,
+	MAX_SEND_RECIPIENTS,
+	MAX_SENDER_NAME_LENGTH,
+	MAX_SUBJECT_LENGTH,
+	MAX_TEXT_LENGTH,
+	attachmentByteLength,
+	validateSendAttachments,
+	validateSendInput,
+	validateSendMessageFields,
+};
 export default emailService;

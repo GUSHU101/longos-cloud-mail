@@ -22,6 +22,17 @@ describe('JWT utilities', () => {
 		expect(await jwtUtils.verifyToken(c, 'x'.repeat(4097))).toBeNull();
 	});
 
+	it('supports expiring purpose-scoped tokens without treating them as sessions', async () => {
+		const c = { env: { jwt_secret: secureSecret } };
+		const token = await jwtUtils.generateScopedToken(c, 'telegram_email', { emailId: 77 }, 300);
+		const payload = await jwtUtils.verifyScopedToken(c, token, 'telegram_email');
+
+		expect(payload.emailId).toBe(77);
+		expect(payload.exp).toBeGreaterThan(payload.iat);
+		expect(await jwtUtils.verifyScopedToken(c, token, 'another_scope')).toBeNull();
+		expect(await jwtUtils.verifyToken(c, token)).toBeNull();
+	});
+
 	it('fails closed when the signing secret is weak', async () => {
 		await expect(jwtUtils.generateToken({ env: { jwt_secret: 'short' } }, {
 			userId: 1,

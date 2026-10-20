@@ -123,6 +123,9 @@ defineExpose({
 })
 
 const {t} = useI18n()
+const MAX_RECIPIENTS = 50
+const MAX_ATTACHMENTS = 10
+const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024
 const writerStore = useWriterStore();
 const draftStore = userDraftStore()
 const settingStore = useSettingStore()
@@ -189,11 +192,17 @@ function deleteContact() {
 function chooseContact() {
 
   const contactList = contactsTabRef.value.getSelectionRows().map(item => item.email);
+  const recipientCountBefore = form.receiveEmail.length
+  const attemptedNewContacts = contactList.filter(item => !form.receiveEmail.includes(item)).length
   contactList.forEach(item => {
-    if (!form.receiveEmail.includes(item)) {
+    if (!form.receiveEmail.includes(item) && form.receiveEmail.length < MAX_RECIPIENTS) {
       form.receiveEmail.push(item);
     }
   })
+
+  if (recipientCountBefore + attemptedNewContacts > MAX_RECIPIENTS) {
+    ElMessage({ message: t('recipientLimitMsg'), type: 'warning' })
+  }
 
   form.receiveEmail = form.receiveEmail.filter(item => {
     return contactList.includes(item) || !writerStore.sendRecipientRecord.includes(item);
@@ -242,11 +251,14 @@ function addTagChange(val) {
 
   let has = false
   emails.forEach(email => {
-    if (isEmail(email) && !form.receiveEmail.includes(email)) {
+    if (isEmail(email) && !form.receiveEmail.includes(email) && form.receiveEmail.length < MAX_RECIPIENTS) {
       form.receiveEmail.push(email)
       has = true
     }
   })
+  if (emails.some(email => isEmail(email) && !form.receiveEmail.includes(email))) {
+    ElMessage({ message: t('recipientLimitMsg'), type: 'warning' })
+  }
   if (selectStatus && has) openSelect()
 }
 
@@ -276,9 +288,20 @@ function chooseFile() {
 
     for (const file of fileList) {
 
+      if (form.attachments.length >= MAX_ATTACHMENTS) {
+        ElMessage({ message: t('attachmentCountLimitMsg'), type: 'warning' })
+        break
+      }
+
       const size = file.size
       const filename = file.name
       const contentType = file.type
+
+      const currentBytes = form.attachments.reduce((total, item) => total + Number(item.size || 0), 0)
+      if (currentBytes + size > MAX_ATTACHMENT_BYTES) {
+        ElMessage({ message: t('attachmentSizeLimitMsg'), type: 'warning' })
+        break
+      }
 
       const content = await fileToBase64(file)
       form.attachments.push({content, filename, size, contentType})
@@ -293,6 +316,21 @@ async function sendEmail() {
   if (form.receiveEmail.length === 0) {
     ElMessage({
       message: t('emptyRecipientMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return
+  }
+
+  if (form.receiveEmail.length > MAX_RECIPIENTS) {
+    ElMessage({ message: t('recipientLimitMsg'), type: 'error', plain: true })
+    return
+  }
+
+  const attachmentBytes = form.attachments.reduce((total, item) => total + Number(item.size || 0), 0)
+  if (form.attachments.length > MAX_ATTACHMENTS || attachmentBytes > MAX_ATTACHMENT_BYTES) {
+    ElMessage({
+      message: form.attachments.length > MAX_ATTACHMENTS ? t('attachmentCountLimitMsg') : t('attachmentSizeLimitMsg'),
       type: 'error',
       plain: true,
     })
@@ -351,7 +389,7 @@ async function sendEmail() {
   show.value = false
 
   emailSend(form, (e) => {
-    percent.value = Math.round((e.loaded * 98) / e.total)
+    percent.value = e.total ? Math.round((e.loaded * 98) / e.total) : 0
   }).then(emailList => {
     const email = emailList[0]
     emailList.forEach(item => {

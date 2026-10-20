@@ -4,6 +4,17 @@ const encoder = new TextEncoder();
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 2;
 
+function relayRequestId(value) {
+	if (value === undefined || value === null || value === '') {
+		return `cloud-mail:${crypto.randomUUID()}`;
+	}
+	const requestId = String(value);
+	if (!/^[A-Za-z0-9._:-]{1,128}$/.test(requestId)) {
+		throw new BizError('Self-hosted relay request ID is invalid');
+	}
+	return requestId;
+}
+
 function integrationToken(c) {
 	const token = String(c.env.LONGOS_INTEGRATION_TOKEN || '').trim();
 	if (!token) return '';
@@ -123,7 +134,8 @@ const selfHostedMailService = {
 			throw new BizError('RELAY_SHARED_SECRET must contain at least 32 characters');
 		}
 
-		const payload = JSON.stringify(params);
+		const message = { ...params, requestId: relayRequestId(params?.requestId) };
+		const payload = JSON.stringify(message);
 		const endpoint = endpointFor(relayUrl);
 		let lastError;
 
@@ -183,5 +195,5 @@ const selfHostedMailService = {
 	},
 };
 
-export { endpointFor, integrationToken, sign };
+export { endpointFor, integrationToken, relayRequestId, sign };
 export default selfHostedMailService;

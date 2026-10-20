@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withSecurityHeaders } from '../src/index';
+import { withObjectSecurityHeaders, withSecurityHeaders } from '../src/index';
 
 describe('asset response hardening', () => {
 	it('preserves the response while adding browser security headers', async () => {
@@ -15,5 +15,14 @@ describe('asset response hardening', () => {
 		expect(response.headers.get('content-security-policy')).toContain("object-src 'none'");
 		expect(response.headers.get('content-security-policy')).toContain('https://challenges.cloudflare.com');
 		expect(await response.text()).toBe('asset');
+	});
+
+	it('returns a hardened 404 when an object is missing', async () => {
+		const response = withObjectSecurityHeaders(null);
+
+		expect(response.status).toBe(404);
+		expect(response.headers.get('cache-control')).toBe('private, no-store');
+		expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(await response.text()).toBe('Not Found');
 	});
 });

@@ -27,6 +27,21 @@ describe('LONGOS relay runtime defaults', () => {
 		}, {relayUrl: 'https://attacker.example.net', mailEngine: 'self_hosted'});
 
 		expect(result.relayUrl).toBe('https://trusted.example.com/_longos/mail-relay');
+		expect(result.mailEngine).toBe('self_hosted');
+	});
+
+	it('disables third-party fallback for an integrated LONGOS deployment', () => {
+		const result = settingService.applyRuntimeMailDefaults({
+			env: {
+				longos_relay_url: 'https://shop.example.com/_longos/mail-relay',
+				LONGOS_INTEGRATION_TOKEN: `longos_it_${'b'.repeat(64)}`,
+			},
+		}, {relayUrl: '', mailEngine: 'resend'});
+
+		expect(result).toMatchObject({
+			relayUrl: 'https://shop.example.com/_longos/mail-relay',
+			mailEngine: 'self_hosted',
+		});
 	});
 
 	it('normalizes relay URLs and rejects unsafe URL components', () => {

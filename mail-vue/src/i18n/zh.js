@@ -156,6 +156,7 @@ const zh = {
     mailEngine: '邮件引擎',
     mailEngineAuto: '自动（兼容模式）',
     selfHostedRelay: 'LONGOS 内置邮件服务器',
+    mailEngineManagedDesc: '已由 LONGOS 系统集成令牌锁定为内置邮件服务器，不会静默切换到第三方发件服务。',
     configured: '已配置',
     notConfigured: '未配置',
     relaySecretDesc: '在 LONGOS 后台“系统集成令牌”创建 Cloud Mail 令牌，并将其保存为 Worker Secret LONGOS_INTEGRATION_TOKEN。令牌不会写入网页或 D1。',

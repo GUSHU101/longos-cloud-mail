@@ -156,6 +156,7 @@ const en = {
     mailEngine: 'Mail Engine',
     mailEngineAuto: 'Automatic (compatible)',
     selfHostedRelay: 'LONGOS Built-in Mail Server',
+    mailEngineManagedDesc: 'Managed by the LONGOS integration token. Mail will not silently fall back to a third-party delivery provider.',
     configured: 'Configured',
     notConfigured: 'Not configured',
     relaySecretDesc: 'Create a Cloud Mail token under LONGOS System Integration Tokens and save it as the Worker secret LONGOS_INTEGRATION_TOKEN. It is never stored in the browser or D1.',

@@ -1,133 +1,151 @@
-# Cloud Mail + LONGOS 最短部署流程
+# LONGOS Cloud Mail 从零部署与网站关联
 
-这份文档只保留首次上线必须完成的步骤。需要权限明细、备份、迁移和故障处理时，再阅读[完整 Cloudflare 手册](./CLOUDFLARE_WORKERS_DEPLOYMENT.md)与[LONGOS 自建邮局手册](./LONGOS_SELF_HOSTED_DEPLOYMENT.md)。
+这是正式环境的唯一推荐快速入口。正常部署全程通过 GitHub 和 Cloudflare 网页完成，不需要在本地执行命令，也不需要手工创建 D1、KV、R2 或 JWT Secret。
 
-## 先理解一件事
+## 1. 三部分各自负责什么
 
-LONGOS 下单通知、订单状态通知和弃单召回邮件，与 Cloud Mail 网页发信是**两条经过不同鉴权的入口，但共用同一个 Postfix/OpenDKIM 邮局**：
+| 部分 | 负责 | 不负责 |
+|---|---|---|
+| Cloudflare Email Routing | 接收外部邮件并交给 Worker | 不负责 LONGOS 自建出站 SMTP |
+| Cloud Mail Worker | 网页邮箱、账号、API、D1/KV/R2、通过 HTTPS 提交发件 | 不能直接连接公网 25 端口 |
+| LONGOS 内置邮局 | Postfix/OpenDKIM、租户发件域授权、站外直投、下单与召回邮件 | 不保存 Cloud Mail 收件箱数据 |
 
-```text
-LONGOS 下单/召回 ── 内网 HMAC ─────────┐
-                                      ├─> LONGOS 自建中继 ─> Postfix/OpenDKIM ─> 收件方 MX
-Cloud Mail 网页 ─ Bearer 集成令牌 ──> 主站网关 ┘
-```
+推荐链路没有 Resend、SendGrid、Mailgun 等第三方发件商。Cloudflare 仍然是 Worker/收件基础设施提供方，但不代发出站邮件。
 
-- 网站业务邮件不需要先进入 Cloud Mail 网页或 D1；
-- Cloud Mail Worker 不能取得网站内部 HMAC 密钥；
-- Worker 只持有一枚可撤销的 LONGOS 系统集成令牌；
-- 一个主站令牌可服务所有活跃租户，租户不需要重复部署 Worker；
-- LONGOS 必须已经按其 `docs/CONFIGURATION.md` 使用 GitHub + Coolify Raw Docker Compose 部署；该栈会自动启动邮件中继，不需要另装服务器组件或执行容器命令。
+## 2. 部署前条件
 
-## 第一步：确认 LONGOS 邮局已经工作
+- LONGOS 已通过 GitHub + Coolify Raw Docker Compose 正常运行；
+- 主站 HTTPS 可访问；
+- LONGOS 的 `mail-relay`、Postfix 和 OpenDKIM 容器健康；
+- 发件域已完成 SPF、DKIM、DMARC，服务器公网 IP 已配置 PTR/rDNS；
+- 收件域使用 Cloudflare 权威 DNS；
+- 服务器允许出站 TCP 25。若云厂商封锁 25 端口，自建直投无法工作，此限制不能由 Worker 绕过。
 
-1. 在 LONGOS 主站后台打开“系统集成令牌”；
-2. 创建一枚 **Cloud Mail** 令牌；
-3. 复制页面显示的两项内容：
+## 3. 在 LONGOS 主站创建唯一令牌
+
+1. 登录 LONGOS **主站控制后台**；
+2. 打开 `系统 → 系统集成令牌`；
+3. 点击“创建 Cloud Mail 令牌”；
+4. 保存页面显示的：
    - 中继地址：`https://主站域名/_longos/mail-relay`
-   - 令牌：`longos_it_...`
-4. 不要把令牌发给租户，也不要填写到 Cloud Mail 网页表单中；部署工具会把它写入 Worker Secret；
-5. 如果后台健康检查不是绿色，先修复 LONGOS 的 `mail-relay`、Postfix、OpenDKIM、发件域和 DNS，Cloud Mail 部署不会掩盖这个问题。
+   - 令牌：`longos_it_` 加 64 个字符；
+5. 点击健康检查，必须同时通过主站鉴权、私有中继、Postfix/OpenDKIM 和队列检查。
 
-## 第二步：准备 Cloudflare
+只创建这一次。它是平台级令牌，可服务全部活跃租户；不要在每个子站重复创建，也不要把令牌交给租户。
 
-只需人工准备两项：
+## 4. 创建 Cloudflare API Token
 
-1. Cloudflare Account ID；
-2. 一个 API Token，至少包含 Workers Scripts、D1、KV、R2 与 Workers Routes 的编辑权限，并只授权本次使用的账户和 Zone。
+在 Cloudflare Dashboard：
 
-D1、KV 和 R2 不需要预先手动创建；下面的部署工具会按名称查找，存在则复用，不存在才创建。
+1. 点击右上角头像 → `My Profile → API Tokens → Create Token → Create Custom Token`；
+2. 给目标账户授予：
+   - `Account / Workers Scripts / Edit`
+   - `Account / Account Settings / Read`（自动识别单一 Account ID）
+   - `Account / D1 / Edit`
+   - `Account / Workers KV Storage / Edit`
+   - 使用附件 R2 时：`Account / Workers R2 Storage / Edit`
+   - 使用 Worker 自定义域时：目标 Zone 的 `Workers Routes / Edit`
+3. Account Resources 只选择部署所用账户；Zone Resources 只选择收件域所在 Zone；
+4. 创建后立即复制 Token。Cloudflare 只显示一次。
 
-## 第三步：一条命令部署
+如果 Token 只能访问一个账户，部署器会自动识别 Account ID。只有 Token 可访问多个账户时，才需要额外填写 `CLOUDFLARE_ACCOUNT_ID`。
 
-电脑安装 Node.js 22 或更高版本，然后在仓库根目录执行：
+## 5. 在 GitHub 保存部署配置
 
-```bash
-cp .cloud-mail.deploy.env.example .cloud-mail.deploy.env
-```
+进入本仓库：`Settings → Secrets and variables → Actions`。
 
-Windows PowerShell 使用：
+### Secrets（敏感，必须）
 
-```powershell
-Copy-Item .cloud-mail.deploy.env.example .cloud-mail.deploy.env
-```
-
-编辑 `.cloud-mail.deploy.env`，至少填写：
-
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
-- `CUSTOM_DOMAIN`，例如 `mail.example.com`
-- `DOMAIN`，例如 `["example.com"]`
-- `ADMIN`，例如 `admin@example.com`
-- `JWT_SECRET`，首次生成后升级时保持不变
-- `LONGOS_RELAY_URL`
-- `LONGOS_INTEGRATION_TOKEN`
-
-然后运行：
-
-```bash
-node scripts/deploy-cloudflare.mjs
-```
-
-只想先检查配置、不连接 Cloudflare 或修改线上资源时，可运行：
-
-```bash
-node scripts/deploy-cloudflare.mjs --validate-only
-```
-
-该命令自动完成：
-
-1. 按锁文件安装 Worker 与 Vue 依赖；
-2. 执行单元测试和正式前端构建；
-3. 创建或复用 D1、KV、R2；
-4. 验证 LONGOS 集成令牌和私有邮局健康状态；
-5. 生成不会提交到 Git 的生产 Wrangler 配置；
-6. 在同一次 Worker 发布中写入 JWT、一次性初始化密钥和 LONGOS 令牌；
-7. 等待自定义域证书生效；
-8. 初始化或升级 D1、验证公开配置接口，并立即撤销一次性初始化密钥和已停用的旧 Secret。
-
-以后升级仍运行同一条命令。它不会创建第二套同名数据库，也不会清空邮件数据。
-
-## 第四步：启用收信
-
-Cloudflare Dashboard 中对 `DOMAIN` 的每个域名执行一次：
-
-1. 打开 **Email Routing**；
-2. 按提示发布 Cloudflare 给出的 MX/TXT 记录；
-3. 在 Routing Rules 中把 Catch-all 目标设为刚部署的 Worker；
-4. 从 Gmail、Outlook 等外部邮箱发一封测试邮件。
-
-Email Routing 只负责“收信”。LONGOS 自建 Postfix 负责“发信”，两者不要混为一项设置。
-
-## 第五步：创建管理员和发件账户
-
-1. 打开 `https://CUSTOM_DOMAIN`；
-2. 使用 `.cloud-mail.deploy.env` 的 `ADMIN` 地址注册并登录；
-3. 在 Cloud Mail 中创建实际要使用的发件账户；
-4. 系统设置的邮件引擎选“自动”或“LONGOS 自建邮件服务器”；
-5. 点击中继健康检查，必须显示系统集成令牌模式且状态正常；
-6. 发一封站外测试邮件，确认 From 是当前选中账户。
-
-## 第六步：验收 LONGOS 下单与召回邮件
-
-这些测试必须在对应租户后台完成，不能只测试 Cloud Mail 网页发信：
-
-1. 在 LONGOS“邮件设置”选择“自建邮件引擎”；
-2. 确认默认、订单、账户、售后、营销发件地址均来自“邮局已签名 + 主站已分配”的域名；
-3. 点击后台测试邮件并检查“邮件日志”；
-4. 创建一笔真实测试订单，确认客户下单邮件和管理员订单提醒均到达；
-5. 将测试订单保持未付款并满足召回时间条件；
-6. 在“邮件召回订单”预览后发送一次不带折扣的邮件；
-7. 再用另一笔订单发送带折扣码的召回邮件，验证链接、购物车恢复与折扣应用；
-8. 邮件日志应显示 `order_new` 或 `abandoned_order_recovery`，传输方式为 `self_hosted`；
-9. 若第一次提交超时，不要更换投递 ID。新版中继会用持久化幂等日志防止重复下单或召回邮件。
-
-## 失败时先看哪里
-
-| 现象 | 先检查 |
+| Name | Value |
 |---|---|
-| 部署工具在 LONGOS 健康检查处停止 | 主站令牌是否有效、URL 是否为主站 `/_longos/mail-relay`、Docker 邮局是否健康 |
-| 403 发件域未授权 | 邮局是否签名该域、主站是否把该发件域唯一分配给当前租户、共享平台域地址是否含 `+site-code` |
-| 下单邮件没有产生 | LONGOS 邮件设置是否启用订单通知、队列 Worker 是否运行、邮件日志是否有失败记录 |
-| 召回页面显示成功但未收到 | 查看召回记录、邮件日志和中继队列；不要只看 Cloud Mail 收件箱 |
-| Worker 能收信不能发信 | Cloud Mail 是否选中了有权限的发件账户，LONGOS 网关健康检查是否为 200 |
-| 邮件进入垃圾箱 | PTR、EHLO A 记录、SPF、DKIM、DMARC 是否一致；新 IP 是否需要逐步升温 |
+| `CLOUDFLARE_API_TOKEN` | 第 4 步创建的 Cloudflare Token |
+| `LONGOS_INTEGRATION_TOKEN` | 第 3 步复制的 `longos_it_...` |
+
+不要把这两个值放进 Variables、README、Issue 或截图。
+
+### Variables（非敏感，必须）
+
+| Name | 示例 | 说明 |
+|---|---|---|
+| `DOMAIN` | `example.com` | 收件域；多个使用 `example.com,example.net` |
+| `ADMIN` | `admin@example.com` | Cloud Mail 管理员地址，域名必须属于 `DOMAIN` |
+| `CUSTOM_DOMAIN` | `mail.example.com` | Cloud Mail 网页访问域名 |
+| `LONGOS_RELAY_URL` | `https://shop.example.com/_longos/mail-relay` | 必须是 LONGOS 主站，不是租户子站 |
+
+### Variables（可选）
+
+| Name | 默认值/用途 |
+|---|---|
+| `NAME` | `cloud-mail` |
+| `D1_DATABASE_NAME` | 与 `NAME` 相同 |
+| `R2_BUCKET_NAME` | 留空不启用 R2；填写如 `cloud-mail-attachments` 启用附件对象存储 |
+| `CLOUDFLARE_ACCOUNT_ID` | 单账户 Token 自动识别；多账户时填写 |
+| `CORS_ORIGINS` | 默认 `[]`，只有确实存在跨域前端时才配置 |
+
+不要创建 `JWT_SECRET`：首次部署会安全随机生成，升级时会保留线上 Secret。只有主动注销全部会话时才手工设置它进行轮换。
+
+不要设置 `CF_EMAIL`、`RESEND_WEBHOOK_SECRET` 或 `RELAY_SHARED_SECRET`。它们属于第三方/旧版兼容模式，LONGOS 一体化自建发信不需要。
+
+## 6. 一键部署 Worker
+
+1. 打开 GitHub 仓库的 `Actions`；
+2. 左侧选择 `Deploy cloud-mail to Cloudflare Workers`；
+3. 点击 `Run workflow`；
+4. 若第 5 步已保存 Variables，表单可保持空白；也可以在表单临时覆盖 Worker 名称、访问域、收件域、管理员邮箱和 LONGOS 网关；
+5. 等待 `Validate, test and deploy` 全部变绿。
+
+工作流会自动测试、构建、创建或复用资源、校验 LONGOS 网关、部署 Worker、初始化/升级 D1、验收公开接口并撤销一次性初始化权限。重复运行是升级，不会清空已有邮件。
+
+失败时直接展开红色步骤。日志会指出缺少的变量、Cloudflare 权限、主站网关状态或自定义域证书等待情况，无需猜测。
+
+## 7. 在 Cloudflare 打开收信
+
+对 `DOMAIN` 中的每个域名分别执行：
+
+1. Cloudflare Dashboard → 选择域名 → `Email → Email Routing`；
+2. 点击启用并确认 Cloudflare 提供的 MX/TXT DNS 记录；
+3. 打开 `Routing rules`；
+4. 编辑 `Catch-all address`，Action 选择 `Send to a Worker`；
+5. 选择刚部署的 `cloud-mail` Worker 并保存；
+6. 从 Gmail/Outlook 发信到 `任意前缀@你的域名` 做收件测试。
+
+Email Routing 的 MX 用于**收信**。SPF/DKIM/DMARC/PTR 用于 LONGOS Postfix **发信**，两套 DNS 记录同时存在并不冲突。
+
+## 8. 首次登录与发信测试
+
+1. 访问 `https://CUSTOM_DOMAIN`；
+2. 用 `ADMIN` 邮箱注册并登录；
+3. 在系统设置中确认邮件引擎显示“LONGOS 内置邮件服务器”；该选项会由集成令牌锁定；
+4. 打开中继设置并运行“测试连接”；
+5. 创建一个属于已授权发件域的邮箱账户；
+6. 向 Gmail/Outlook 发送测试邮件，检查 From、DKIM、SPF 和 DMARC。
+
+一体化模式不会“自动回退到 Resend”。如果 LONGOS 邮局异常，发件会明确失败并记录原因，避免邮件内容在不知情时交给第三方。
+
+## 9. 验收网站业务邮件
+
+Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，必须分别测试：
+
+1. LONGOS 主站后台确认发件域已签名并唯一分配给相应租户；
+2. 租户后台选择默认、订单、账户、售后和营销发件地址；
+3. 发送后台测试邮件；
+4. 创建真实测试订单，检查客户订单邮件与管理员提醒；
+5. 触发一次不带折扣、一次带折扣的弃单召回；
+6. 邮件日志中的传输方式应为 `self_hosted`；
+7. 检查收件方原始邮件的 SPF、DKIM、DMARC 均为 PASS。
+
+租户可使用不同发件域，前提是该域已经由邮局签名，并由 LONGOS 主站唯一分配给该租户。店铺访问域和邮件发件域彼此独立。
+
+## 10. 常见问题
+
+| 现象 | 原因与处理 |
+|---|---|
+| Worker 能收信但不能发信 | 检查 LONGOS 令牌、主站网关健康、服务器 TCP 25 和发件域授权 |
+| 403 发件域未授权 | 邮局未签名该域，或主站未把该域唯一分配给当前租户 |
+| GitHub 提示 Account ID | Token 可访问多个账户；新增 Variable `CLOUDFLARE_ACCOUNT_ID` |
+| 自定义域打不开 | 检查 Worker Custom Domain、DNS Zone 与 Token 的 Workers Routes 权限 |
+| 邮件进垃圾箱 | 校验 PTR/EHLO A/SPF/DKIM/DMARC，一致后对新 IP 逐步升温 |
+| 云服务器封锁 25 | 向云厂商申请解封或更换允许直投的服务器；Worker 无法绕过 |
+| 想使用 Resend | 这是独立兼容模式，不是 LONGOS 推荐路径；移除 LONGOS 集成后按详细参考文档配置 |
+
+更深入的资源迁移、备份、回滚与故障处理见 [Cloudflare Workers 参考手册](./CLOUDFLARE_WORKERS_DEPLOYMENT.md)；Postfix、OpenDKIM、PTR 与租户发件域见 [LONGOS 自建邮局参考手册](./LONGOS_SELF_HOSTED_DEPLOYMENT.md)。

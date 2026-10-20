@@ -15,7 +15,6 @@ const configPath = resolve(repositoryRoot, configArgument);
 const generatedConfig = join(workerRoot, 'wrangler.generated.toml');
 const directPnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const corepackCommand = process.platform === 'win32' ? 'corepack.cmd' : 'corepack';
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const hasDirectPnpm = spawnSync(directPnpmCommand, ['--version'], { windowsHide: true }).status === 0;
 const pnpmCommand = hasDirectPnpm ? directPnpmCommand : corepackCommand;
 const pnpmPrefix = hasDirectPnpm ? [] : ['pnpm'];
@@ -143,6 +142,22 @@ async function workerSecretNames(config, deploymentEnv) {
   return new Set(body.result.map(item => item?.name).filter(Boolean));
 }
 
+async function resolveCloudflareAccountId(config) {
+  if (config.CLOUDFLARE_ACCOUNT_ID) return config.CLOUDFLARE_ACCOUNT_ID;
+
+  const { response, body, text } = await fetchJson('https://api.cloudflare.com/client/v4/accounts?per_page=50', {
+    headers: { authorization: `Bearer ${config.CLOUDFLARE_API_TOKEN}` },
+  });
+  if (!response.ok || body.success !== true || !Array.isArray(body.result)) {
+    fail(`无法自动识别 Cloudflare Account ID（HTTP ${response.status}）：${body.errors?.[0]?.message || text}。可在部署变量中显式填写 CLOUDFLARE_ACCOUNT_ID。`);
+  }
+  if (body.result.length !== 1) {
+    const accounts = body.result.map(item => `${item.name || '未命名账户'} (${item.id})`).join('、');
+    fail(`API Token 可访问 ${body.result.length} 个 Cloudflare 账户，无法安全自动选择。请填写 CLOUDFLARE_ACCOUNT_ID${accounts ? `：${accounts}` : '。'}`);
+  }
+  return body.result[0].id;
+}
+
 const deploymentKeys = [
   'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'NAME', 'D1_DATABASE_NAME',
   'D1_DATABASE_ID', 'KV_NAMESPACE_ID', 'R2_BUCKET_NAME', 'CUSTOM_DOMAIN', 'DOMAIN',
@@ -153,14 +168,20 @@ const deploymentKeys = [
 const config = fromEnvironment
   ? Object.fromEntries(deploymentKeys.map(key => [key, process.env[key] || '']))
   : parseEnvFile(configPath);
-const required = ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'NAME', 'D1_DATABASE_NAME', 'DOMAIN', 'ADMIN', 'JWT_SECRET'];
+config.NAME ||= 'cloud-mail';
+config.D1_DATABASE_NAME ||= config.NAME;
+const required = ['CLOUDFLARE_API_TOKEN', 'DOMAIN', 'ADMIN'];
 for (const key of required) if (!config[key]) fail(`${key} 不能为空。`);
-if (!/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('CLOUDFLARE_ACCOUNT_ID 必须是 32 位十六进制 ID。');
+if (config.CLOUDFLARE_ACCOUNT_ID && !/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('CLOUDFLARE_ACCOUNT_ID 必须是 32 位十六进制 ID。');
 if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(config.NAME)) fail('NAME 只能使用小写字母、数字、下划线和连字符。');
 if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(config.D1_DATABASE_NAME)) fail('D1_DATABASE_NAME 格式不正确。');
-if (!/^[A-Za-z0-9_-]{32,}$/.test(config.JWT_SECRET)) fail('JWT_SECRET 必须至少包含 32 个 URL-safe 字符，并在升级时保持不变。');
+if (config.JWT_SECRET && !/^[A-Za-z0-9_-]{32,}$/.test(config.JWT_SECRET)) fail('JWT_SECRET 必须至少包含 32 个 URL-safe 字符。留空时首次部署会自动生成，升级会保留线上密钥。');
 
-const domains = parseJsonArray(config.DOMAIN, 'DOMAIN', true).map(domain => normalizeDomain(domain, 'DOMAIN'));
+const rawDomains = String(config.DOMAIN || '').trim();
+const parsedDomains = rawDomains.startsWith('[')
+  ? parseJsonArray(rawDomains, 'DOMAIN', true)
+  : rawDomains.split(/[\s,;]+/).filter(Boolean);
+const domains = [...new Set(parsedDomains.map(domain => normalizeDomain(domain, 'DOMAIN')))];
 const corsOrigins = parseJsonArray(config.CORS_ORIGINS || '[]', 'CORS_ORIGINS').map(origin => {
   let url;
   try { url = new URL(origin); } catch { fail(`CORS_ORIGINS 含无效 URL：${origin}`); }
@@ -201,6 +222,10 @@ if (validateOnly) {
   process.exit(0);
 }
 
+config.CLOUDFLARE_ACCOUNT_ID = await resolveCloudflareAccountId(config);
+if (!/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('自动识别到的 CLOUDFLARE_ACCOUNT_ID 格式不正确。');
+console.log(`[配置] Cloudflare Account ID：${config.CLOUDFLARE_ACCOUNT_ID}`);
+
 const deploymentEnv = {
   ...process.env,
   CI: 'true',
@@ -208,10 +233,7 @@ const deploymentEnv = {
   CLOUDFLARE_API_TOKEN: config.CLOUDFLARE_API_TOKEN,
 };
 
-console.log('\n[1/8] 安装锁定依赖并执行发布前测试');
-run(npmCommand, ['ci'], { cwd: join(repositoryRoot, 'mail-relay'), env: deploymentEnv });
-run(npmCommand, ['test'], { cwd: join(repositoryRoot, 'mail-relay'), env: deploymentEnv });
-run(npmCommand, ['audit', '--omit=dev', '--audit-level=moderate'], { cwd: join(repositoryRoot, 'mail-relay'), env: deploymentEnv });
+console.log('\n[1/8] 安装锁定依赖并执行 Worker 发布前测试');
 pnpm(['--dir', 'mail-worker', 'install', '--frozen-lockfile'], { env: deploymentEnv });
 pnpm(['--dir', 'mail-vue', 'install', '--frozen-lockfile'], { env: deploymentEnv });
 pnpm(['--dir', 'mail-worker', 'audit', '--prod', '--audit-level', 'moderate'], { env: deploymentEnv });
@@ -273,7 +295,7 @@ if (config.LONGOS_RELAY_URL) {
   if (!health.response.ok || health.body.status !== 'ok') fail(`LONGOS 邮件网关不可用（HTTP ${health.response.status}）：${health.body.message || health.text}`);
   console.log(`LONGOS 邮件网关正常，Postfix 队列：${health.body.queueDepth ?? '未报告'}。`);
 } else {
-  console.log('未配置 LONGOS 邮件网关；Cloud Mail 将使用其他已配置的出站引擎。');
+  console.log('未配置 LONGOS 邮件网关；Cloud Mail 默认仅收信。只有管理员明确配置兼容引擎后才会站外发信。');
 }
 
 console.log('\n[6/8] 生成生产配置，原子写入 Secret 并部署 Worker');
@@ -299,18 +321,27 @@ const replacements = {
 for (const [key, value] of Object.entries(replacements)) {
   wranglerConfig = wranglerConfig.replaceAll(`\${${key}}`, value);
 }
-if (/^(true|1)$/i.test(config.CLOUDFLARE_EMAIL || '')) wranglerConfig += '\n[[send_email]]\nname = "email"\n';
+if (/^(true|1)$/i.test(config.CLOUDFLARE_EMAIL || '') && !config.LONGOS_INTEGRATION_TOKEN) {
+  wranglerConfig += '\n[[send_email]]\nname = "email"\n';
+} else if (/^(true|1)$/i.test(config.CLOUDFLARE_EMAIL || '') && config.LONGOS_INTEGRATION_TOKEN) {
+  console.log('已启用 LONGOS 一体化自建发信：忽略并移除第三方 Cloudflare Email 出站绑定。');
+}
 if (/\$\{[A-Z0-9_]+\}/.test(wranglerConfig)) fail('生成的 Wrangler 配置仍有未替换变量。');
 writeFileSync(generatedConfig, wranglerConfig, { encoding: 'utf8', mode: 0o600 });
 const initSecret = randomBytes(32).toString('hex');
-const deploymentSecrets = {
-  jwt_secret: config.JWT_SECRET,
-  INIT_SECRET: initSecret,
-};
+const existingSecretNames = await workerSecretNames(config, deploymentEnv);
+const deploymentSecrets = { INIT_SECRET: initSecret };
+if (config.JWT_SECRET) {
+  deploymentSecrets.jwt_secret = config.JWT_SECRET;
+} else if (!existingSecretNames.has('jwt_secret')) {
+  deploymentSecrets.jwt_secret = randomBytes(48).toString('base64url');
+  console.log('首次部署：已自动生成 Worker JWT 签名密钥。');
+} else {
+  console.log('升级部署：保留线上已有 Worker JWT 签名密钥。');
+}
 if (config.LONGOS_INTEGRATION_TOKEN) deploymentSecrets.LONGOS_INTEGRATION_TOKEN = config.LONGOS_INTEGRATION_TOKEN;
 if (!config.LONGOS_INTEGRATION_TOKEN && config.RELAY_SHARED_SECRET) deploymentSecrets.RELAY_SHARED_SECRET = config.RELAY_SHARED_SECRET;
-if (config.RESEND_WEBHOOK_SECRET) deploymentSecrets.RESEND_WEBHOOK_SECRET = config.RESEND_WEBHOOK_SECRET;
-const existingSecretNames = await workerSecretNames(config, deploymentEnv);
+if (!config.LONGOS_INTEGRATION_TOKEN && config.RESEND_WEBHOOK_SECRET) deploymentSecrets.RESEND_WEBHOOK_SECRET = config.RESEND_WEBHOOK_SECRET;
 
 const secretTempDirectory = mkdtempSync(join(tmpdir(), 'longos-cloud-mail-'));
 const secretFile = join(secretTempDirectory, 'worker-secrets.json');
@@ -339,7 +370,7 @@ console.log('\n[7/8] 撤销配置中已停用的旧 Worker Secret');
 const configuredOptionalSecrets = {
   LONGOS_INTEGRATION_TOKEN: config.LONGOS_INTEGRATION_TOKEN,
   RELAY_SHARED_SECRET: config.LONGOS_INTEGRATION_TOKEN ? '' : config.RELAY_SHARED_SECRET,
-  RESEND_WEBHOOK_SECRET: config.RESEND_WEBHOOK_SECRET,
+  RESEND_WEBHOOK_SECRET: config.LONGOS_INTEGRATION_TOKEN ? '' : config.RESEND_WEBHOOK_SECRET,
 };
 for (const [name, value] of Object.entries(configuredOptionalSecrets)) {
   if (value || !existingSecretNames.has(name)) continue;

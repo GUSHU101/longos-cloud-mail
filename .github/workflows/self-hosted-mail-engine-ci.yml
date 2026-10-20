@@ -64,6 +64,14 @@ jobs:
       - name: Build frontend
         working-directory: mail-vue
         run: pnpm run build
+      - name: Validate simplified deployment inputs
+        env:
+          CLOUDFLARE_API_TOKEN: validation-token
+          DOMAIN: example.com,example.net
+          ADMIN: admin@example.com
+          LONGOS_RELAY_URL: https://shop.example.com/_longos/mail-relay
+          LONGOS_INTEGRATION_TOKEN: longos_it_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: node scripts/deploy-cloudflare.mjs --from-env --validate-only
       - name: Bundle Worker
         working-directory: mail-worker
         run: pnpm exec wrangler deploy --dry-run --outdir /tmp/cloud-mail-worker
@@ -77,13 +85,13 @@ jobs:
           sed -i 's|${D1_DATABASE_ID}|00000000-0000-0000-0000-000000000001|g' wrangler-action-ci.toml
           sed -i 's|${KV_NAMESPACE_ID}|00000000000000000000000000000001|g' wrangler-action-ci.toml
           sed -i 's|${R2_BUCKET_NAME}|cloud-mail-ci|g' wrangler-action-ci.toml
-          sed -i 's|"${DOMAIN}"|["example.com"]|g' wrangler-action-ci.toml
+          sed -i 's|${DOMAIN}|["example.com"]|g' wrangler-action-ci.toml
           sed -i 's|${ADMIN}|admin@example.com|g' wrangler-action-ci.toml
           sed -i 's|${PROJECT_LINK}|https://example.com/project|g' wrangler-action-ci.toml
           sed -i 's|${AI_MODEL}|@cf/meta/llama-3.1-8b-instruct-fast|g' wrangler-action-ci.toml
           sed -i 's|${ANALYSIS_CACHE}|false|g' wrangler-action-ci.toml
           sed -i 's|${LONGOS_RELAY_URL}|https://admin.example.com/_longos/mail-relay|g' wrangler-action-ci.toml
-          sed -i 's|"${CORS_ORIGINS}"|[]|g' wrangler-action-ci.toml
+          sed -i 's|${CORS_ORIGINS}|[]|g' wrangler-action-ci.toml
           if grep -q '\${' wrangler-action-ci.toml; then
             echo "Unresolved placeholder in rendered production configuration"
             exit 1

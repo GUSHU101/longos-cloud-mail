@@ -105,8 +105,12 @@ const settingService = {
 		const longosRelayUrl = normalizeRelayUrl(c.env.longos_relay_url);
 		if (c.env.LONGOS_INTEGRATION_TOKEN) {
 			// A bearer credential must never be redirected to an administrator-
-			// supplied host. Pin its destination to the deployment variable.
+			// supplied host. Pin its destination and provider to the deployment
+			// variables. An integrated LONGOS installation must fail visibly if
+			// its own relay is unhealthy; it must never silently disclose mail to
+			// Cloudflare Email or Resend as an implicit fallback.
 			runtimeSetting.relayUrl = longosRelayUrl;
+			runtimeSetting.mailEngine = 'self_hosted';
 		} else if (!runtimeSetting.relayUrl && longosRelayUrl) {
 			runtimeSetting.relayUrl = longosRelayUrl;
 		}
@@ -202,6 +206,7 @@ const settingService = {
 		settingRow.hasCfEmail = !!c.env.email
 		settingRow.hasRelayCredential = !!(c.env.LONGOS_INTEGRATION_TOKEN || c.env.RELAY_SHARED_SECRET)
 		settingRow.relayAuthMode = c.env.LONGOS_INTEGRATION_TOKEN ? 'integration_token' : (c.env.RELAY_SHARED_SECRET ? 'legacy_hmac' : '')
+		settingRow.mailEngineManaged = !!c.env.LONGOS_INTEGRATION_TOKEN
 		// Retain the old response field for one release so cached frontends do
 		// not incorrectly report an incomplete relay during a rolling deploy.
 		settingRow.hasRelaySecret = settingRow.hasRelayCredential
@@ -236,6 +241,9 @@ const settingService = {
 		const allowedMailEngines = ['auto', 'cloudflare', 'resend', 'self_hosted'];
 		if (params.mailEngine !== undefined && !allowedMailEngines.includes(params.mailEngine)) {
 			throw new BizError('Invalid mail engine');
+		}
+		if (c.env.LONGOS_INTEGRATION_TOKEN && params.mailEngine !== undefined && params.mailEngine !== 'self_hosted') {
+			throw new BizError('Mail engine is managed by the LONGOS integration');
 		}
 		if (params.relayUrl !== undefined) {
 			params.relayUrl = normalizeRelayUrl(params.relayUrl);

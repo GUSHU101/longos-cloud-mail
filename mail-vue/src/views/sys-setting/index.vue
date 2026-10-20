@@ -194,7 +194,7 @@
                   <el-select
                       style="width: 180px"
                       v-model="setting.mailEngine"
-                      :disabled="settingLoading"
+                      :disabled="settingLoading || setting.mailEngineManaged"
                       @change="value => changeField('mailEngine', value)"
                   >
                     <el-option
@@ -204,6 +204,9 @@
                         :value="item.value"
                     />
                   </el-select>
+                  <el-tooltip v-if="setting.mailEngineManaged" effect="dark" :content="$t('mailEngineManagedDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
                 </div>
               </div>
               <div class="setting-item" v-if="setting.mailEngine === 'auto' || setting.mailEngine === 'self_hosted'">
@@ -1014,7 +1017,7 @@ defineOptions({
   name: 'sys-setting'
 })
 
-const currentVersion = 'v4.4.0'
+const currentVersion = 'v4.5.0'
 const hasUpdate = ref(false)
 let getUpdateErrorCount = 1;
 const {t, locale} = useI18n();
@@ -1163,12 +1166,17 @@ const tgMsgFromOption = [{label: t('show'), value: 'show'}, {label: t('hide'), v
 const tgMsgToOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}]
 const tgMsgTextOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}]
 const tgMsgLabelWidth = computed(() => locale.value === 'en' ? '120px' : '100px');
-const mailEngineOptions = computed(() => [
-  {label: t('mailEngineAuto'), value: 'auto'},
-  {label: t('cloudflareEmailSending'), value: 'cloudflare'},
-  {label: 'Resend', value: 'resend'},
-  {label: t('selfHostedRelay'), value: 'self_hosted'},
-])
+const mailEngineOptions = computed(() => {
+  if (setting.value?.mailEngineManaged) {
+    return [{label: t('selfHostedRelay'), value: 'self_hosted'}]
+  }
+  return [
+    {label: t('mailEngineAuto'), value: 'auto'},
+    ...(setting.value?.hasCfEmail ? [{label: t('cloudflareEmailSending'), value: 'cloudflare'}] : []),
+    {label: 'Resend', value: 'resend'},
+    {label: t('selfHostedRelay'), value: 'self_hosted'},
+  ]
+})
 
 getSettings()
 getUpdate()

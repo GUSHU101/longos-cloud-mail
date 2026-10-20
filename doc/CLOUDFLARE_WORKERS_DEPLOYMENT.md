@@ -2,9 +2,9 @@
 
 本文面向第一次部署 Cloud Mail 的用户，覆盖 Cloudflare 账户准备、D1、KV、R2、Worker、自定义域名、Email Routing、GitHub Actions、首次初始化、升级、备份、回滚和常见故障。
 
-第一次部署优先使用仓库内置的跨平台引导工具：复制 `.cloud-mail.deploy.env.example` 后运行 `node scripts/deploy-cloudflare.mjs`。它会构建前端、校验配置、创建或复用 D1/KV/R2、验证 LONGOS 网关、部署 Worker、写入 Secret，并调用受保护的初始化接口。只想看必须步骤时先阅读[最短部署流程](./QUICK_START.md)。GitHub Actions 仍适合团队持续部署；手工拼 Wrangler 配置只用于排障。
+第一次部署优先使用仓库内置的 GitHub Actions，无需本地命令。它会调用统一部署器构建前端、校验配置、创建或复用 D1/KV/R2、验证 LONGOS 网关、部署 Worker、写入 Secret，并调用受保护的初始化接口。只想看必须步骤时先阅读[从零部署与网站关联](./QUICK_START.md)。本地脚本和手工 Wrangler 配置只用于开发或排障。
 
-> Cloudflare Workers 不是完整 SMTP 服务器。Cloudflare Email Routing 负责把入站邮件交给 Worker；出站发信需要 Cloudflare Email、Resend 或 LONGOS/自建中继。若选择 LONGOS 自建发信，还需继续阅读 [Cloud Mail + LONGOS 一体化自建邮件部署与升级](./LONGOS_SELF_HOSTED_DEPLOYMENT.md)。
+> Cloudflare Workers 不是完整 SMTP 服务器，也不能直接连接公网 TCP 25。Cloudflare Email Routing 负责把入站邮件交给 Worker；推荐由 LONGOS 内置 Postfix/OpenDKIM 直投站外邮件，不依赖第三方发件商。Cloudflare Email/Resend 只作为独立部署的兼容选项。
 
 ## 1. 部署完成后会有哪些资源
 
@@ -42,7 +42,7 @@
 | `NAME` | `cloud-mail` | Worker 名称，也是默认 KV 名称 |
 | `D1_DATABASE_NAME` | `cloud-mail` | D1 名称；不填写时与 `NAME` 相同 |
 | `CUSTOM_DOMAIN` | `mail.example.com` | 不含 `https://` 和路径 |
-| `DOMAIN` | `["example.com"]` | JSON 数组，不是逗号分隔文本 |
+| `DOMAIN` | `example.com` | 单域直接填写；多域可用逗号分隔或 JSON 数组 |
 | `ADMIN` | `admin@example.com` | 必须使用 `DOMAIN` 中的一个域名 |
 | `R2_BUCKET_NAME` | `cloud-mail-attachments` | 全账户唯一的 R2 桶名 |
 
@@ -52,8 +52,8 @@
 2. 选择或添加用于收信的域名；
 3. 按 Cloudflare 提示把域名 NS 改为 Cloudflare 分配的名称服务器；
 4. 等待站点状态变为 **Active**；
-5. 在账户首页、站点 Overview 右侧或浏览器地址栏中复制 32 位十六进制 **Account ID**；
-6. 记录为后续 GitHub Variable `CLOUDFLARE_ACCOUNT_ID`。
+5. 当 API Token 只允许访问一个账户时，部署器会自动识别 Account ID；
+6. 只有 Token 能访问多个账户时，才复制 32 位 **Account ID** 并保存为 GitHub Variable `CLOUDFLARE_ACCOUNT_ID`。
 
 自定义 Worker 域名和 Email Routing 所在 Zone 必须属于同一个 Cloudflare 账户，否则 API Token 即使有效也不能完成路由配置。
 
@@ -119,11 +119,11 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 
 | Variable | 必填 | 示例 | 说明 |
 |---|---:|---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | 是 | 32 位 Account ID | Cloudflare 账户 ID |
+| `CLOUDFLARE_ACCOUNT_ID` | 多账户 Token 才需要 | 32 位 Account ID | 单账户 Token 自动识别 |
 | `NAME` | 否 | `cloud-mail` | 默认 `cloud-mail` |
 | `D1_DATABASE_NAME` | 否 | `cloud-mail` | 默认与 `NAME` 相同 |
 | `CUSTOM_DOMAIN` | 建议 | `mail.example.com` | 不含协议和路径；留空时使用 `workers.dev` |
-| `DOMAIN` | 是 | `["example.com","example.net"]` | 必须是合法 JSON 数组 |
+| `DOMAIN` | 是 | `example.com,example.net` | 逗号分隔或 JSON 数组均可 |
 | `ADMIN` | 是 | `admin@example.com` | 域必须包含在 `DOMAIN` 中 |
 | `D1_DATABASE_ID` | 生产升级建议 | D1 UUID | 首次自动创建时可留空 |
 | `KV_NAMESPACE_ID` | 生产升级建议 | 32 位 KV ID | 首次自动创建时可留空 |
@@ -131,7 +131,7 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 | `PROJECT_LINK` | 否 | 仓库 HTTPS 地址 | 页面中的项目链接 |
 | `AI_MODEL` | 否 | `@cf/meta/llama-3.1-8b-instruct-fast` | 默认值已提供 |
 | `ANALYSIS_CACHE` | 否 | `false` | 只能填 `true` 或 `false` |
-| `CF_EMAIL` | 否 | `false` | 是否加入 Cloudflare 出站邮件 binding |
+| `CF_EMAIL` | 独立兼容模式 | `false` | LONGOS 一体化模式保持关闭 |
 | `LONGOS_RELAY_URL` | LONGOS 发信需要 | `https://admin.example.com/_longos/mail-relay` | 必须 HTTPS；不要以 `/health` 结尾 |
 | `CORS_ORIGINS` | 否 | `["https://admin.example.com"]` | 仅跨域浏览器客户端需要；默认 `[]`，同源始终允许 |
 
@@ -144,11 +144,11 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 | Secret | 必填 | 说明 |
 |---|---:|---|
 | `CLOUDFLARE_API_TOKEN` | 是 | 第 4 节创建的 Token |
-| `JWT_SECRET` | 是 | 仅用于登录会话 JWT 签名，至少 32 个 URL-safe 字符 |
+| `JWT_SECRET` | 否 | 留空时首次自动生成，升级保留；仅主动轮换时设置 |
 | `LONGOS_INTEGRATION_TOKEN` | 仅 LONGOS 发信 | 在 LONGOS 后台“系统集成令牌”创建，可随时显示和复制 |
 | `RESEND_WEBHOOK_SECRET` | 仅 Resend 状态回调 | Resend 为 Webhook 签发的 `whsec_...` 密钥，不能使用 API Token 代替 |
 
-生成 `JWT_SECRET`：
+如需主动轮换 `JWT_SECRET`（会注销现有会话），可生成新值：
 
 ```bash
 openssl rand -hex 32
@@ -162,7 +162,7 @@ $bytes = New-Object byte[] 32
 [Convert]::ToHexString($bytes).ToLowerInvariant()
 ```
 
-不要把 `JWT_SECRET` 当成管理员登录密码。工作流会为每次部署自动生成独立的 `INIT_SECRET`，仅在本次数据库初始化期间存在，验收成功后立即撤销，不需要添加到 GitHub Secrets。首次初始化只建表；部署完成后用 `ADMIN` 地址在注册页面创建账户，该账户会被识别为管理员。
+不要把 `JWT_SECRET` 当成管理员登录密码。通常不要创建它：工作流首次部署自动生成 Worker Secret，升级时保留原值。工作流还会为每次部署自动生成独立的 `INIT_SECRET`，仅在本次数据库初始化期间存在，验收成功后立即撤销。首次初始化只建表；部署完成后用 `ADMIN` 地址在注册页面创建账户，该账户会被识别为管理员。
 
 ### 6.3 配置 Resend 投递状态回调（仅使用 Resend 时）
 
@@ -214,12 +214,12 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 工作流会依次执行：
 
 1. 检出指定版本并调用与本地部署相同的 `scripts/deploy-cloudflare.mjs`；
-2. 按锁文件安装 Relay、Worker 与 Vue 依赖；
-3. 运行 Relay/Worker 测试、三套生产依赖审计和 Vue 正式构建；
+2. 按锁文件安装 Worker 与 Vue 依赖；
+3. 运行 Worker 测试、生产依赖审计和 Vue 正式构建；独立 Relay 由 CI 单独验证；
 4. 校验域名、管理员、ID、布尔值、HTTPS 中继地址和 Secret；
 5. 创建或复用 D1、KV 和 R2；
 6. 使用系统集成令牌验证 LONGOS 网关、Postfix、OpenDKIM、队列和幂等日志；
-7. 生成临时生产配置，在同一次发布中写入 `jwt_secret`、自动生成的 `INIT_SECRET` 及可选 LONGOS/Resend Secret；
+7. 生成临时生产配置：首次自动生成、升级保留 `jwt_secret`，写入一次性 `INIT_SECRET` 及 LONGOS Secret；
 8. 自动撤销配置中已停用的旧 Secret；
 9. 重试 `POST /api/init` 直到自定义域证书就绪，验收公开配置接口，并撤销和复核一次性 `INIT_SECRET`。
 
@@ -289,7 +289,7 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 3. 登录后进入系统设置；
 4. 检查允许注册、允许收信、角色可用域名、发件次数等限制；
 5. 创建一个测试邮箱账户；
-6. 根据出站方案选择邮件引擎：Cloudflare、Resend、LONGOS/自建中继或自动；
+6. LONGOS 一体化部署会自动锁定“LONGOS 内置邮件服务器”，不允许静默回退第三方；
 7. 使用 LONGOS 时确认中继 URL 与 GitHub Variable 一致；
 8. 不要把 `JWT_SECRET` 或 `LONGOS_INTEGRATION_TOKEN` 填入网页设置。
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## v4.5.0 - 2026-10-20
+
+### Simplified Cloudflare deployment
+
+- Made GitHub Actions the primary no-terminal deployment path and added an optional Run Workflow form for the Worker name, custom domain, mail domains, administrator address, and LONGOS relay URL.
+- Reduced the required stored configuration to two secrets and four ordinary variables for the recommended LONGOS path.
+- Added safe single-account discovery, made `CLOUDFLARE_ACCOUNT_ID` optional, accepted simple/comma-separated mail domains, defaulted resource names, and automatically generated the first JWT signing secret while preserving it on upgrades.
+- Fixed production rendering of JSON-valued domain and CORS variables so generated Wrangler TOML is syntactically valid, and aligned CI template validation with the real deployment renderer.
+- Removed the standalone relay install/test cycle from Worker production deployment; the independent relay remains covered by its dedicated CI workflow.
+
+### Self-hosted delivery by default
+
+- Locked an installation with `LONGOS_INTEGRATION_TOKEN` to the LONGOS Postfix/OpenDKIM engine and rejected provider changes, preventing silent third-party delivery fallback.
+- Simplified the mail-engine UI for integrated deployments and clearly marked the deployment-managed setting.
+- Rewrote the main README and quick start around Cloudflare inbound routing, the Worker HTTPS gateway, LONGOS website integration, tenant-specific sending domains, and direct-to-MX delivery.
+
 ## v4.4.0 - 2026-10-19
 
 ### Deployment

@@ -105,9 +105,9 @@ Settings -> Secrets and variables -> Actions
 | `NAME` | `cloud-mail` | Worker、D1、KV 默认名称 |
 | `D1_DATABASE_NAME` | `cloud-mail` | D1 真实名称；默认与 `NAME` 相同 |
 | `CUSTOM_DOMAIN` | `mail.example.com` | 不带协议和路径 |
-| `DOMAIN` | `["example.com"]` | 必须是 JSON 数组 |
+| `DOMAIN` | `example.com` | 单域直接填写；多域可用逗号分隔或 JSON 数组 |
 | `ADMIN` | `admin@example.com` | Cloud Mail 管理员地址 |
-| `CLOUDFLARE_ACCOUNT_ID` | `...` | Cloudflare 账户 ID |
+| `CLOUDFLARE_ACCOUNT_ID` | `...` | 多账户 Token 才需填写；单账户自动识别 |
 | `D1_DATABASE_ID` | `...` | 可留空，由工作流查找或创建 |
 | `KV_NAMESPACE_ID` | `...` | 可留空，由工作流查找或创建 |
 | `R2_BUCKET_NAME` | `cloud-mail` | 使用附件时填写已有 Bucket |
@@ -123,10 +123,10 @@ Settings -> Secrets and variables -> Actions
 | 名称 | 值 |
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | 能部署 Worker 并管理所用 D1/KV/自定义域的令牌 |
-| `JWT_SECRET` | 至少 32 位随机值，可用 `openssl rand -hex 32` 生成 |
+| `JWT_SECRET` | 通常不创建；首次自动生成并在升级时保留，主动轮换时才设置 |
 | `LONGOS_INTEGRATION_TOKEN` | 在 LONGOS 后台“系统集成令牌”创建的 Cloud Mail 令牌 |
 
-`LONGOS_INTEGRATION_TOKEN` 只在 LONGOS 主站控制域名后台创建一次，权限限定为 `cloud-mail:send` 和 `cloud-mail:health`，即可服务全部有效租户。普通租户后台无需、也不会提供重复绑定。令牌由 LONGOS 使用 `APP_KEY` 加密保存，可在后台随时显示、复制，也可查看过期时间、最后调用时间、最后显示时间和显示次数并立即撤销。显示接口按管理员限流。工作流会把 `JWT_SECRET` 和该令牌写入 Cloudflare Worker Secret，不会放入 `wrangler.toml`、网页或 D1。旧版仅保存哈希的令牌需重新创建。轮换 `APP_KEY` 时须先把旧密钥加入 `APP_PREVIOUS_KEYS`；下一次显示令牌时 LONGOS 会自动使用当前密钥重新加密。`APP_KEY` 和仍在使用的旧密钥都必须纳入安全备份。
+`LONGOS_INTEGRATION_TOKEN` 只在 LONGOS 主站控制域名后台创建一次，权限限定为 `cloud-mail:send` 和 `cloud-mail:health`，即可服务全部有效租户。普通租户后台无需、也不会提供重复绑定。令牌由 LONGOS 使用 `APP_KEY` 加密保存，可在后台随时显示、复制，也可查看过期时间、最后调用时间、最后显示时间和显示次数并立即撤销。显示接口按管理员限流。工作流会自动维护 `jwt_secret` 并把该令牌写入 Cloudflare Worker Secret，不会放入 `wrangler.toml`、网页或 D1。旧版仅保存哈希的令牌需重新创建。轮换 `APP_KEY` 时须先把旧密钥加入 `APP_PREVIOUS_KEYS`；下一次显示令牌时 LONGOS 会自动使用当前密钥重新加密。`APP_KEY` 和仍在使用的旧密钥都必须纳入安全备份。
 
 首次部署可以不填 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`；工作流会优先查找与 `D1_DATABASE_NAME` 同名的 D1 和与 `NAME` 同名的 KV，不存在时才创建。已有生产数据时，建议显式填写原 D1/KV ID，避免绑定到新资源；`D1_DATABASE_NAME` 必须与该 ID 对应数据库的真实名称一致。
 
@@ -190,8 +190,8 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 Cloud Mail：
 
 1. 使用管理员账户进入“系统设置”；
-2. 邮件引擎保持“自动（兼容模式）”即可；
-3. 当 `LONGOS_RELAY_URL` 和 Worker Secret `LONGOS_INTEGRATION_TOKEN` 都存在时，自动模式优先选择自建中继；
+2. 配置 `LONGOS_RELAY_URL` 和 Worker Secret `LONGOS_INTEGRATION_TOKEN` 后，邮件引擎会锁定为“LONGOS 内置邮件服务器”；
+3. 邮局异常时明确失败并记录原因，不会静默改用 Cloudflare Email 或 Resend；
 4. 发信时选择实际 Cloud Mail 邮箱账户，`From` 会使用该账户，不会统一改写成 LONGOS 默认邮箱；
 5. 角色必须有权使用该邮箱域名。
 

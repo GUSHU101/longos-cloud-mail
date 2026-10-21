@@ -23,7 +23,7 @@
 - 首次使用 Workers 时已在 `Workers & Pages` 打开过一次产品页面；首次使用 R2 时已接受条款/开通结算，或者部署时关闭 R2；
 - 服务器允许出站 TCP 25。若云厂商封锁 25 端口，自建直投无法工作，此限制不能由 Worker 绕过。
 
-使用一次性本地向导还需要可信电脑已安装 Node.js 22；项目会通过 pnpm 或 Corepack 安装锁定依赖。使用 GitHub Actions 则不需要本机 Node.js。
+使用一次性本地向导还需要可信电脑已安装包含 npm 的 Node.js 22 或更高版本。无需另外安装 pnpm 或 Corepack：检测不到两者时，部署器会从 npm 官方注册表临时安装与 CI 一致的固定版本，禁用安装脚本、剥离部署凭据，并在进程结束时自动删除。使用 GitHub Actions 则不需要本机 Node.js。
 
 ## 3. 在 LONGOS 主站创建唯一令牌
 
@@ -71,7 +71,9 @@ node --version
 node scripts/deploy-wizard.mjs
 ```
 
-Node.js 必须为 22 或更高。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再隐藏输入并二次确认管理员初始密码，同时隐藏读取所需 Token。确认页只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。关闭终端后不留下部署凭据。
+Node.js 必须为 22 或更高并包含 npm。无需先运行 `corepack enable` 或全局安装 pnpm；缺少 pnpm/Corepack 时，向导会自动准备固定版本。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再隐藏输入并二次确认管理员初始密码，同时隐藏读取所需 Token。确认页只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。关闭终端后不留下部署凭据。
+
+若旧版本曾显示“找不到可安全执行的 pnpm 或 Corepack JavaScript 入口”，先运行 `git pull --ff-only origin main` 更新部署器，再重新执行向导。该错误发生在连接 Cloudflare 之前，因此不会创建资源，也不会消耗刚输入的 Token；重新运行时需再次输入隐藏凭据。
 
 首次部署通常只需填写：
 

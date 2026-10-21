@@ -340,7 +340,9 @@ node scripts/deploy-cloudflare.mjs
 
 Windows PowerShell 复制命令为 `Copy-Item .cloud-mail.deploy.env.example .cloud-mail.deploy.env`。真实配置和生成的 `mail-worker/wrangler.generated.toml` 都已加入 `.gitignore`。以下小节仅用于部署工具失败后的逐步排障。
 
-GitHub Actions 不可用时，可以在可信电脑上手动部署。要求 Node.js 22 或更高版本、pnpm 11 和可打开浏览器完成 Cloudflare 登录。
+GitHub Actions 不可用时，可以在可信电脑上手动部署。正式向导只要求包含 npm 的 Node.js 22 或更高版本；若本机没有 pnpm/Corepack，会安全地临时准备固定版 pnpm。只有执行下面的逐条 Wrangler 手动排障命令时，才需要自行安装 pnpm 11 并打开浏览器完成 Cloudflare 登录。
+
+Windows Node.js 24 可能不再附带 Corepack。不要为此改用来源不明的全局安装脚本；更新仓库后直接重新运行 `node scripts/deploy-wizard.mjs`。部署器会固定 pnpm 版本和 npm 官方注册表、禁用依赖安装脚本、从 npm 子进程环境中删除 Token/Secret/Password 等凭据，并在退出时清理临时目录。
 
 ### 13.1 安装并登录
 

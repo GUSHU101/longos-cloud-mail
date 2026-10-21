@@ -23,12 +23,18 @@ if (process.platform === 'win32') {
 }
 let pnpmCommand;
 let pnpmPrefix;
+let pnpmCleanup = () => {};
 try {
-  ({command: pnpmCommand, prefix: pnpmPrefix} = resolvePnpmCommand());
+  ({
+    command: pnpmCommand,
+    prefix: pnpmPrefix,
+    cleanup: pnpmCleanup = () => {},
+  } = resolvePnpmCommand());
 } catch (error) {
   console.error(`[验证失败] ${error.message}`);
   process.exit(1);
 }
+process.once('exit', () => pnpmCleanup());
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -81,6 +87,7 @@ run(process.execPath, [
   'scripts/github-deployment.test.mjs',
   'scripts/local-deployment.test.mjs',
   'scripts/longos-dns-sync.test.mjs',
+  'scripts/pnpm-command.test.mjs',
   'scripts/deploy-validation.test.mjs',
   'scripts/workflow-security.test.mjs',
 ]);

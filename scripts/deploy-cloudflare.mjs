@@ -27,8 +27,15 @@ const configPath = resolve(repositoryRoot, configArgument);
 const generatedConfig = join(workerRoot, 'wrangler.generated.toml');
 let pnpmCommand;
 let pnpmPrefix;
+let pnpmEntrypoint = '';
+let pnpmCleanup = () => {};
 try {
-  ({command: pnpmCommand, prefix: pnpmPrefix} = resolvePnpmCommand());
+  ({
+    command: pnpmCommand,
+    prefix: pnpmPrefix,
+    entrypoint: pnpmEntrypoint = '',
+    cleanup: pnpmCleanup = () => {},
+  } = resolvePnpmCommand());
 } catch (error) {
   console.error(`[失败] ${error.message}`);
   process.exit(1);
@@ -62,6 +69,7 @@ process.once('SIGINT', () => handleTermination('SIGINT', 130));
 process.once('SIGTERM', () => handleTermination('SIGTERM', 143));
 process.once('exit', exitCode => {
 	if (exitCode !== 0) runFailureCleanup();
+	pnpmCleanup();
 });
 
 const nodeMajor = Number(process.versions.node.split('.')[0]);
@@ -348,6 +356,7 @@ for (const secretName of [
 ]) {
   delete verificationEnv[secretName];
 }
+if (pnpmEntrypoint) verificationEnv.LONGOS_PNPM_ENTRYPOINT = pnpmEntrypoint;
 const deploymentEnv = {
   ...verificationEnv,
   CLOUDFLARE_ACCOUNT_ID: config.CLOUDFLARE_ACCOUNT_ID,

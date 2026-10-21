@@ -1,23 +1,32 @@
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { verifyCloudflareApiToken } from './cloudflare-auth.mjs';
+import { configureEmailRouting } from './email-routing.mjs';
+import { syncLongosOutboundDns } from './longos-dns-sync.mjs';
+import { resolvePnpmCommand } from './pnpm-command.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
 const cliArgs = process.argv.slice(2);
 const validateOnly = cliArgs.includes('--validate-only');
 const fromEnvironment = cliArgs.includes('--from-env');
+const skipVerification = cliArgs.includes('--skip-verification');
 const configArgument = cliArgs.find(argument => !argument.startsWith('--')) || '.cloud-mail.deploy.env';
 const configPath = resolve(repositoryRoot, configArgument);
 const generatedConfig = join(workerRoot, 'wrangler.generated.toml');
-const directPnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-const corepackCommand = process.platform === 'win32' ? 'corepack.cmd' : 'corepack';
-const hasDirectPnpm = spawnSync(directPnpmCommand, ['--version'], { windowsHide: true }).status === 0;
-const pnpmCommand = hasDirectPnpm ? directPnpmCommand : corepackCommand;
-const pnpmPrefix = hasDirectPnpm ? [] : ['pnpm'];
+let pnpmCommand;
+let pnpmPrefix;
+try {
+  ({command: pnpmCommand, prefix: pnpmPrefix} = resolvePnpmCommand());
+} catch (error) {
+  console.error(`[失败] ${error.message}`);
+  process.exit(1);
+}
 let failureCleanup = null;
 
 function fail(message) {
@@ -112,6 +121,19 @@ function normalizeDomain(value, field) {
   return domain;
 }
 
+function validPublicHostname(value) {
+  const hostname = String(value || '').trim().toLowerCase().replace(/\.$/, '');
+  return isIP(hostname) === 0
+    && !['localhost', 'localhost.localdomain'].includes(hostname)
+    && !hostname.endsWith('.localhost')
+    && !hostname.endsWith('.local')
+    && !hostname.endsWith('.internal')
+    && !hostname.endsWith('.home.arpa')
+    && /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(hostname)
+    && hostname.includes('.')
+    && hostname.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+}
+
 function parseJsonArray(value, field, required = false) {
   let result;
   try { result = JSON.parse(value || '[]'); } catch { fail(`${field} 必须是 JSON 数组，例如 ["example.com"]。`); }
@@ -174,12 +196,14 @@ const deploymentKeys = [
   'ADMIN', 'CORS_ORIGINS', 'JWT_SECRET', 'LONGOS_RELAY_URL', 'LONGOS_INTEGRATION_TOKEN',
   'RELAY_SHARED_SECRET', 'CLOUDFLARE_EMAIL', 'ANALYSIS_CACHE', 'AI_MODEL', 'PROJECT_LINK',
   'RESEND_WEBHOOK_SECRET',
+  'AUTO_CONFIGURE_EMAIL_ROUTING',
 ];
 const config = fromEnvironment
   ? Object.fromEntries(deploymentKeys.map(key => [key, process.env[key] || '']))
   : parseEnvFile(configPath);
 config.NAME ||= 'cloud-mail';
 config.D1_DATABASE_NAME ||= config.NAME;
+config.AUTO_CONFIGURE_EMAIL_ROUTING ||= 'true';
 const required = ['CLOUDFLARE_API_TOKEN', 'DOMAIN', 'ADMIN'];
 for (const key of required) if (!config[key]) fail(`${key} 不能为空。`);
 if (config.CLOUDFLARE_ACCOUNT_ID && !/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('CLOUDFLARE_ACCOUNT_ID 必须是 32 位十六进制 ID。');
@@ -208,7 +232,7 @@ if (config.CUSTOM_DOMAIN) config.CUSTOM_DOMAIN = normalizeDomain(config.CUSTOM_D
 if (config.R2_BUCKET_NAME && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(config.R2_BUCKET_NAME)) fail('R2_BUCKET_NAME 格式不正确。');
 if (config.PROJECT_LINK && !/^https:\/\/[A-Za-z0-9./?_=:%#-]+$/.test(config.PROJECT_LINK)) fail('PROJECT_LINK 必须是安全的 HTTPS URL。');
 if (config.AI_MODEL && !/^[@A-Za-z0-9._/-]+$/.test(config.AI_MODEL)) fail('AI_MODEL 含有不允许的字符。');
-for (const field of ['CLOUDFLARE_EMAIL', 'ANALYSIS_CACHE']) {
+for (const field of ['CLOUDFLARE_EMAIL', 'ANALYSIS_CACHE', 'AUTO_CONFIGURE_EMAIL_ROUTING']) {
   if (config[field] && !/^(true|false)$/i.test(config[field])) fail(`${field} 只能填写 true 或 false。`);
 }
 if (config.RESEND_WEBHOOK_SECRET && !/^whsec_[A-Za-z0-9_+/=-]{16,}$/.test(config.RESEND_WEBHOOK_SECRET)) {
@@ -219,12 +243,21 @@ if (config.LONGOS_RELAY_URL || config.LONGOS_INTEGRATION_TOKEN) {
   let relay;
   try { relay = new URL(config.LONGOS_RELAY_URL); } catch { fail('LONGOS_RELAY_URL 不是有效 URL。'); }
   if (relay.protocol !== 'https:' || relay.username || relay.password
+    || relay.port || !validPublicHostname(relay.hostname)
     || relay.pathname.replace(/\/$/, '') !== '/_longos/mail-relay' || relay.search || relay.hash) {
-    fail('LONGOS_RELAY_URL 必须是主站 HTTPS /_longos/mail-relay 地址。');
+    fail('LONGOS_RELAY_URL 必须是使用公共域名和标准 HTTPS 端口的主站 /_longos/mail-relay 地址。');
   }
   if (!/^longos_it_[A-Za-z0-9]{64}$/.test(config.LONGOS_INTEGRATION_TOKEN)) fail('LONGOS_INTEGRATION_TOKEN 格式不正确。');
 }
 if (!config.LONGOS_INTEGRATION_TOKEN && config.RELAY_SHARED_SECRET && config.RELAY_SHARED_SECRET.length < 32) fail('RELAY_SHARED_SECRET 至少需要 32 个字符。');
+
+const trustedGitHubDeployment = process.env.CI === 'true'
+  && process.env.GITHUB_ACTIONS === 'true'
+  && process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+  && /\/\.github\/workflows\/deploy-cloudflare\.yml@/.test(process.env.GITHUB_WORKFLOW_REF || '');
+if (skipVerification && !trustedGitHubDeployment) {
+  fail('--skip-verification 只允许 GitHub Actions 在独立无密钥验证步骤通过后使用。');
+}
 
 if (validateOnly) {
   const sourceLabel = fromEnvironment ? '当前环境变量' : `配置文件 ${configPath}`;
@@ -232,24 +265,40 @@ if (validateOnly) {
   process.exit(0);
 }
 
+let verifiedCloudflareToken;
+try {
+  verifiedCloudflareToken = await verifyCloudflareApiToken({token: config.CLOUDFLARE_API_TOKEN});
+} catch (error) {
+  fail(error.message);
+}
+console.log(`[配置] Cloudflare API Token：${verifiedCloudflareToken.status}（已确认不是 Global API Key）`);
+
 config.CLOUDFLARE_ACCOUNT_ID = await resolveCloudflareAccountId(config);
 if (!/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('自动识别到的 CLOUDFLARE_ACCOUNT_ID 格式不正确。');
 console.log(`[配置] Cloudflare Account ID：${config.CLOUDFLARE_ACCOUNT_ID}`);
 
+const verificationEnv = {...process.env, CI: 'true'};
+for (const secretName of [
+  'CLOUDFLARE_API_TOKEN',
+  'JWT_SECRET',
+  'LONGOS_INTEGRATION_TOKEN',
+  'RELAY_SHARED_SECRET',
+  'RESEND_WEBHOOK_SECRET',
+]) {
+  delete verificationEnv[secretName];
+}
 const deploymentEnv = {
-  ...process.env,
-  CI: 'true',
+  ...verificationEnv,
   CLOUDFLARE_ACCOUNT_ID: config.CLOUDFLARE_ACCOUNT_ID,
   CLOUDFLARE_API_TOKEN: config.CLOUDFLARE_API_TOKEN,
 };
 
-console.log('\n[1/8] 安装锁定依赖并执行 Worker 发布前测试');
-pnpm(['--dir', 'mail-worker', 'install', '--frozen-lockfile'], { env: deploymentEnv });
-pnpm(['--dir', 'mail-vue', 'install', '--frozen-lockfile'], { env: deploymentEnv });
-pnpm(['--dir', 'mail-worker', 'audit', '--prod', '--audit-level', 'moderate'], { env: deploymentEnv });
-pnpm(['--dir', 'mail-vue', 'audit', '--prod', '--audit-level', 'moderate'], { env: deploymentEnv });
-pnpm(['--dir', 'mail-worker', 'run', 'test:unit'], { env: deploymentEnv });
-pnpm(['--dir', 'mail-vue', 'run', 'build'], { env: deploymentEnv });
+console.log('\n[1/8] 验证锁定依赖、测试与生产构建');
+if (skipVerification) {
+  console.log('GitHub Actions 独立无密钥验证步骤已通过，继续执行生产发布。');
+} else {
+  run(process.execPath, ['scripts/verify-deployment.mjs'], {env: verificationEnv});
+}
 
 console.log('\n[2/8] 创建或复用 Cloudflare D1');
 let d1Id = config.D1_DATABASE_ID;
@@ -441,7 +490,7 @@ failureCleanup = null;
 // Poll a no-side-effect authorization probe instead of treating the first
 // response from a still-warm old isolate as a failed deployment.
 let initSecretRetired = false;
-const retirementAttempts = 24;
+const retirementAttempts = 6;
 for (let attempt = 1; attempt <= retirementAttempts; attempt += 1) {
   try {
     const retiredInitCheck = await fetch(
@@ -468,7 +517,14 @@ for (let attempt = 1; attempt <= retirementAttempts; attempt += 1) {
   }
   if (attempt < retirementAttempts) await new Promise(resolveDelay => setTimeout(resolveDelay, 5_000));
 }
-if (!initSecretRetired) fail('INIT_SECRET 已从 Cloudflare 配置删除，但边缘运行时在两分钟内仍未完成撤销传播。可安全重跑工作流。');
+if (!initSecretRetired) {
+  // The control-plane secret inventory above is authoritative. A warm edge
+  // isolate can briefly keep the previous Worker version and return 200/204
+  // after Wrangler has already removed the binding. Do not turn a successful
+  // deployment into a false failure; the removed secret cannot enter any new
+  // isolate and the probe is deliberately side-effect free.
+  console.warn('⚠ Cloudflare Secret 列表已确认 INIT_SECRET 删除，但部分边缘实例的旧版本传播超过 30 秒；部署继续，旧实例淘汰后会自动返回 401。');
+}
 readinessCheck = await fetchJson(`${workerUrl}/api/health`);
 if (!readinessCheck.response.ok || readinessCheck.body.status !== 'ok') {
   fail(`撤销一次性密钥后 D1/KV 就绪验收失败（HTTP ${readinessCheck.response.status}）。`);
@@ -476,7 +532,87 @@ if (!readinessCheck.response.ok || readinessCheck.body.status !== 'ok') {
 publicCheck = await fetch(`${workerUrl}/api/setting/websiteConfig`, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
 if (!publicCheck.ok) fail(`撤销一次性密钥后公开配置验收失败（HTTP ${publicCheck.status}）。`);
 
+const autoConfigureInbound = config.AUTO_CONFIGURE_EMAIL_ROUTING.toLowerCase() === 'true';
+console.log(autoConfigureInbound
+  ? '\n[收信自动配置] 启用 Email Routing 并将 Catch-all 指向当前 Worker'
+  : '\n[收信自动配置] 已通过 AUTO_CONFIGURE_EMAIL_ROUTING=false 主动跳过');
+let inboundRouting = autoConfigureInbound
+  ? await configureEmailRouting({
+    token: config.CLOUDFLARE_API_TOKEN,
+    accountId: config.CLOUDFLARE_ACCOUNT_ID,
+    workerName: config.NAME,
+    domains,
+  })
+  : {configured: [], manual: domains.map(domain => ({domain, reason: 'AUTO_CONFIGURE_EMAIL_ROUTING=false'})), warnings: []};
+for (const domain of inboundRouting.configured) console.log(`✓ ${domain} → ${config.NAME}`);
+if (autoConfigureInbound) {
+  for (const item of inboundRouting.manual) {
+    console.warn(`⚠ ${item.domain} 未能自动配置：${item.reason}`);
+  }
+  for (const item of inboundRouting.warnings) {
+    console.warn(`⚠ ${item.domain} 配置已写入但尚未健康：${item.reason}`);
+  }
+}
+
+let outboundDns = {configured: false, skipped: true, reason: 'LONGOS gateway is not configured'};
+if (config.LONGOS_RELAY_URL) {
+  console.log('\n[发信自动配置] 合并 SPF、发布 DKIM/DMARC，并校准 DNS-only 邮件主机');
+  outboundDns = await syncLongosOutboundDns({
+    relayUrl: config.LONGOS_RELAY_URL,
+    integrationToken: config.LONGOS_INTEGRATION_TOKEN,
+    cloudflareToken: config.CLOUDFLARE_API_TOKEN,
+    accountId: config.CLOUDFLARE_ACCOUNT_ID,
+  });
+  if (outboundDns.configured) {
+    const sync = outboundDns.sync;
+    console.log(`✓ LONGOS 发信 DNS 已同步：新增 ${(sync.created || []).length}、更新 ${(sync.updated || []).length}、清理 ${(sync.removed || []).length}`);
+    for (const warning of sync.warnings || []) console.warn(`⚠ ${warning}`);
+  } else if (outboundDns.skipped) {
+    console.warn('⚠ 当前 LONGOS 版本尚不支持部署期 DNS 同步；请先升级 LONGOS，或在邮件设置中运行“一键配置邮件 DNS”。');
+  } else {
+    console.warn(`⚠ LONGOS 发信 DNS 自动同步未完成：${outboundDns.reason}`);
+  }
+}
+
+if (autoConfigureInbound && inboundRouting.warnings.length > 0 && outboundDns.configured) {
+  console.log('正在等待发信 SPF 合并后的 Email Routing 状态收敛…');
+  for (let attempt = 1; attempt <= 4 && inboundRouting.warnings.length > 0; attempt += 1) {
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 5_000));
+    inboundRouting = await configureEmailRouting({
+      token: config.CLOUDFLARE_API_TOKEN,
+      accountId: config.CLOUDFLARE_ACCOUNT_ID,
+      workerName: config.NAME,
+      domains,
+    });
+    if (inboundRouting.warnings.length > 0) {
+      console.log(`Email Routing 状态复核 ${attempt}/4：${inboundRouting.warnings.map(item => `${item.domain}=${item.reason}`).join('；')}`);
+    }
+  }
+}
+
+if (config.LONGOS_RELAY_URL && !outboundDns.configured) {
+  fail(`Worker 已部署，但 LONGOS 发信 DNS 验收未通过：${outboundDns.reason || '当前 LONGOS 不支持部署期 DNS 同步'}`);
+}
+if (autoConfigureInbound && inboundRouting.manual.length > 0) {
+  fail(`Worker 已部署，但以下收信域未完成自动配置：${inboundRouting.manual.map(item => `${item.domain}（${item.reason}）`).join('；')}`);
+}
+if (autoConfigureInbound && inboundRouting.warnings.length > 0) {
+  fail(`Worker 已部署，但以下收信域在发信 SPF 合并后仍未就绪：${inboundRouting.warnings.map(item => `${item.domain}（${item.reason}）`).join('；')}`);
+}
+
 console.log(`\n[完成] Cloud Mail 已部署：${workerUrl}`);
 if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${workerUrl}\n`, 'utf8');
-console.log('下一步只需在 Cloudflare Email Routing 中，把每个收件域的 Catch-all 指向这个 Worker。');
+if (!autoConfigureInbound) {
+  console.log('Email Routing 自动配置已主动关闭；现有 MX 与 Catch-all 未被修改。');
+} else if (inboundRouting.manual.length === 0 && inboundRouting.warnings.length === 0) {
+  console.log('Email Routing 与 Catch-all 已自动配置，无需再到 Cloudflare 手工设置收件规则。');
+} else {
+  if (inboundRouting.manual.length > 0) {
+    console.log(`仅以下域需要在 Cloudflare Email Routing 手工补充 Catch-all：${inboundRouting.manual.map(item => item.domain).join('、')}`);
+    console.log('给 API Token 增加 Zone:Read、Zone Settings:Edit 和 Email Routing Rules:Edit 后重跑，可自动完成。');
+  }
+  if (inboundRouting.warnings.length > 0) {
+    console.log(`以下域的收信规则已就绪，但 Email Routing DNS 状态仍异常：${inboundRouting.warnings.map(item => item.domain).join('、')}。请先修复 MX/SPF 冲突。`);
+  }
+}
 console.log('然后登录 Cloud Mail 创建发件账户，并在 LONGOS 后台分别发送“测试邮件、下单邮件、弃单召回邮件”完成业务验收。');

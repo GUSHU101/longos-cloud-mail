@@ -92,41 +92,39 @@ _dmarc.example.com        TXT   "v=DMARC1; p=none; rua=mailto:dmarc@example.com"
 
 ## 5. 配置 GitHub Actions
 
-打开 GitHub 仓库：
+不再预先创建 Actions Variables。所有非敏感配置在每次部署的 **Run workflow** 表单中填写：
 
-```text
-Settings -> Secrets and variables -> Actions
-```
-
-### Variables
-
-| 名称 | 示例 | 说明 |
+| 表单字段 | 示例 | 说明 |
 |---|---|---|
-| `NAME` | `cloud-mail` | Worker、D1、KV 默认名称 |
-| `D1_DATABASE_NAME` | `cloud-mail` | D1 真实名称；默认与 `NAME` 相同 |
-| `CUSTOM_DOMAIN` | `mail.example.com` | 不带协议和路径 |
-| `DOMAIN` | `example.com` | 单域直接填写；多域可用逗号分隔或 JSON 数组 |
-| `ADMIN` | `admin@example.com` | Cloud Mail 管理员地址 |
-| `CLOUDFLARE_ACCOUNT_ID` | `...` | 多账户 Token 才需填写；单账户自动识别 |
-| `D1_DATABASE_ID` | `...` | 可留空，由工作流查找或创建 |
-| `KV_NAMESPACE_ID` | `...` | 可留空，由工作流查找或创建 |
-| `R2_BUCKET_NAME` | `cloud-mail` | 使用附件时填写已有 Bucket |
-| `PROJECT_LINK` | 仓库或站点地址 | 可选 |
-| `AI_MODEL` | `@cf/meta/llama-3.1-8b-instruct-fast` | 可选 |
-| `CF_EMAIL` | `false` | 自建出站时可保持 `false` |
-| `ANALYSIS_CACHE` | `false` | 可选 |
-| `LONGOS_RELAY_URL` | `https://admin.example.com/_longos/mail-relay` | 必须为 HTTPS |
-| `CORS_ORIGINS` | `[]` | 同源部署保持默认；跨域浏览器客户端填 HTTPS Origin JSON 数组 |
+| `worker_name` | `cloud-mail` | Worker、D1、KV 默认名称 |
+| `custom_domain` | `mail.example.com` | 不带协议和路径 |
+| `mail_domains` | `example.com` | 单域直接填写；多域逗号分隔 |
+| `admin_email` | `admin@example.com` | Cloud Mail 管理员地址 |
+| `cloudflare_account_id` | `...` | 多账户 Token 才填写；单账户自动识别 |
+| `d1_database_name` | `cloud-mail` | 默认与 Worker 名相同 |
+| `d1_database_id` | `...` | 首次可留空，由工作流查找或创建 |
+| `kv_namespace_id` | `...` | 首次可留空，由工作流查找或创建 |
+| `r2_bucket_name` | `cloud-mail-attachments` | 使用附件时填写 |
+| `project_link` | 仓库或站点地址 | 可选 |
+| `ai_model` | `@cf/meta/llama-3.1-8b-instruct-fast` | 默认值已提供 |
+| `cloudflare_email` | `false` | LONGOS 自建出站保持关闭 |
+| `analysis_cache` | `false` | 可选 |
+| `longos_relay_url` | `https://admin.example.com/_longos/mail-relay` | 公共域名、标准 HTTPS 443、固定路径 |
+| `cors_origins` | `[]` | 同源保持默认；跨域客户端填 HTTPS Origin JSON 数组 |
 
 ### Secrets
 
+GitHub 没有密文 `workflow_dispatch` 输入类型，因此下列值不能放入 Run workflow 表单。部署前把它们保存到 `Settings → Environments → production`，或运行 `node scripts/trigger-github-deployment.mjs` 在部署向导中隐藏输入并自动触发。向导通过 stdin 上传密钥，不会把值放进命令参数或工作流事件。
+
 | 名称 | 值 |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | 能部署 Worker 并管理所用 D1/KV/自定义域的令牌 |
+| `CLOUDFLARE_API_TOKEN` | 能部署 Worker，并管理 D1/KV、自定义域、Email Routing 与发信 DNS 的受限令牌 |
 | `JWT_SECRET` | 通常不创建；首次自动生成并在升级时保留，主动轮换时才设置 |
 | `LONGOS_INTEGRATION_TOKEN` | 在 LONGOS 后台“系统集成令牌”创建的 Cloud Mail 令牌 |
 
-`LONGOS_INTEGRATION_TOKEN` 只在 LONGOS 主站控制域名后台创建一次，权限限定为 `cloud-mail:send` 和 `cloud-mail:health`，即可服务全部有效租户。普通租户后台无需、也不会提供重复绑定。令牌由 LONGOS 使用 `APP_KEY` 加密保存，可在后台随时显示、复制，也可查看过期时间、最后调用时间、最后显示时间和显示次数并立即撤销。显示接口按管理员限流。工作流会自动维护 `jwt_secret` 并把该令牌写入 Cloudflare Worker Secret，不会放入 `wrangler.toml`、网页或 D1。旧版仅保存哈希的令牌需重新创建。轮换 `APP_KEY` 时须先把旧密钥加入 `APP_PREVIOUS_KEYS`；下一次显示令牌时 LONGOS 会自动使用当前密钥重新加密。`APP_KEY` 和仍在使用的旧密钥都必须纳入安全备份。
+`production` Environment 应只允许默认分支并要求仓库所有者审批；删除同名 Repository Secrets。部署工作流只允许仓库所有者手动部署默认分支，生产凭据也只注入最终部署步骤。
+
+`LONGOS_INTEGRATION_TOKEN` 只在 LONGOS 主站控制域名后台创建一次，权限限定为 `cloud-mail:send` 和 `cloud-mail:health`，即可服务全部有效租户。普通租户后台无需、也不会提供重复绑定。令牌由 LONGOS 使用 `APP_KEY` 加密保存，可在后台随时显示、复制，也可查看过期时间、最后调用时间、最后显示时间和显示次数并立即撤销。显示接口按管理员限流。工作流会自动维护 `jwt_secret` 并把该令牌写入 Cloudflare Worker Secret，不会放入 `wrangler.toml`、网页或 D1。部署最后从受保护的 LONGOS 端点读取只含公开值的邮件 DNS 清单，Cloudflare 写操作始终由 GitHub Runner 执行；Cloudflare Token 不会发送给 LONGOS，因此 Coolify 不必再保存第二份。旧版仅保存哈希的令牌需重新创建。轮换 `APP_KEY` 时须先把旧密钥加入 `APP_PREVIOUS_KEYS`；下一次显示令牌时 LONGOS 会自动使用当前密钥重新加密。`APP_KEY` 和仍在使用的旧密钥都必须纳入安全备份。
 
 首次部署可以不填 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`；工作流会优先查找与 `D1_DATABASE_NAME` 同名的 D1 和与 `NAME` 同名的 KV，不存在时才创建。已有生产数据时，建议显式填写原 D1/KV ID，避免绑定到新资源；`D1_DATABASE_NAME` 必须与该 ID 对应数据库的真实名称一致。
 
@@ -141,7 +139,7 @@ curl -fsS -H "Authorization: Bearer <LONGOS_INTEGRATION_TOKEN>" \
 
 一套 Cloud Mail 服务多个 LONGOS 子站时，`LONGOS_RELAY_URL` 必须指向控制站 HTTPS 域名，经任何租户域名调用都会被拒绝。网关从 `<purpose>+<site-code>@<platform-domain>` 解析稳定站点 code，在控制库核验租户仍为 active 后才投递，并会覆盖请求中不可信的租户字段。更换子站商店域名不改变站点 code，不需换令牌、重新部署 Worker 或重建邮箱。
 
-无中断轮换步骤：创建新令牌 → 更新 GitHub Secret 并重新部署 Worker → 在 Cloud Mail 中测试连接 → 撤销旧令牌。
+无中断轮换步骤：创建新令牌 → 通过安全部署向导或 Environment 更新 Secret 并重新部署 Worker → 在 Cloud Mail 中测试连接 → 撤销旧令牌。
 
 ## 6. 从 GitHub 部署正式版
 
@@ -159,12 +157,13 @@ GitHub 页面操作：
 2. 选择 `Deploy cloud-mail to Cloudflare Workers`；
 3. 点击 `Run workflow`；
 4. 分支保持 `main`；
-5. 等待构建、D1/KV 绑定、Worker 生产部署、Secret 写入和数据库初始化全部成功。
+5. 填写收件域、管理员邮箱、LONGOS 网关及本次资源设置；
+6. 等待构建、D1/KV 绑定、Worker 生产部署、Secret 写入和数据库初始化全部成功。
 
 也可以使用 GitHub CLI：
 
 ```bash
-gh workflow run deploy-cloudflare.yml --ref main --repo GUSHU101/longos-cloud-mail
+node scripts/trigger-github-deployment.mjs
 gh run watch --exit-status
 ```
 

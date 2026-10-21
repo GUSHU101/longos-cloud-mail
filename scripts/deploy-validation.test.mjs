@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import test from 'node:test';
+
+const source = readFileSync(new URL('./deploy-cloudflare.mjs', import.meta.url), 'utf8');
+const verifier = readFileSync(new URL('./verify-deployment.mjs', import.meta.url), 'utf8');
+
+test('treats the Cloudflare secret inventory as the authoritative revocation check', () => {
+  assert.match(source, /secretsAfterRetirement\.has\('INIT_SECRET'\).*fail/);
+  assert.match(source, /if \(!initSecretRetired\) \{[\s\S]*console\.warn/);
+  assert.doesNotMatch(source, /if \(!initSecretRetired\) fail/);
+});
+test('uses a side-effect-free runtime probe and accepts only unauthorized as propagated', () => {
+  assert.match(source, /authorization_probe=1/);
+  assert.match(source, /retiredInitCheck\.status === 401/);
+});
+test('fails final acceptance for real inbound or outbound DNS errors', () => {
+  assert.match(source, /LONGOS 发信 DNS 验收未通过/);
+  assert.match(source, /收信域未完成自动配置/);
+  assert.match(source, /发信 SPF 合并后仍未就绪/);
+});
+
+test('keeps production credentials out of dependency, test, audit and build subprocesses', () => {
+  assert.match(source, /const verificationEnv = \{\.\.\.process\.env, CI: 'true'\}/);
+  for (const secret of [
+    'CLOUDFLARE_API_TOKEN',
+    'JWT_SECRET',
+    'LONGOS_INTEGRATION_TOKEN',
+    'RELAY_SHARED_SECRET',
+    'RESEND_WEBHOOK_SECRET',
+  ]) {
+    assert.match(source, new RegExp(`delete verificationEnv\\[secretName\\]`));
+    assert.match(source, new RegExp(`'${secret}'`));
+  }
+  assert.match(source, /const deploymentEnv = \{\s*\.\.\.verificationEnv,/);
+  assert.doesNotMatch(source, /const deploymentEnv = \{\s*\.\.\.process\.env,/);
+  assert.match(source, /scripts\/verify-deployment\.mjs'[\s\S]*env: verificationEnv/);
+  assert.match(source, /--skip-verification 只允许 GitHub Actions/);
+  assert.match(source, /GITHUB_EVENT_NAME === 'workflow_dispatch'/);
+  assert.match(source, /deploy-cloudflare\\\.yml@/);
+  assert.match(verifier, /mail-worker', 'install', '--frozen-lockfile/);
+  assert.match(verifier, /mail-vue', 'run', 'build'/);
+  assert.match(verifier, /scripts\/workflow-security\.test\.mjs/);
+});

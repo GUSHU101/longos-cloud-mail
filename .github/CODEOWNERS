@@ -1,0 +1,4 @@
+# Production deployment executes repository code with short-lived access to
+# Cloudflare and LONGOS credentials. Every merged change therefore requires
+# the repository owner's review when branch protection enables Code Owners.
+* @GUSHU101

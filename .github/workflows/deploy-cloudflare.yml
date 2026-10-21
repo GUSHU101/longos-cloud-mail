@@ -14,24 +14,65 @@ on:
         type: string
       mail_domains:
         description: "收件域；一个填 example.com，多个用逗号分隔"
-        required: false
+        required: true
         type: string
       admin_email:
         description: "Cloud Mail 管理员邮箱，域名必须属于上面的收件域"
-        required: false
+        required: true
         type: string
       longos_relay_url:
         description: "LONGOS 主站邮件网关，例如 https://shop.example.com/_longos/mail-relay"
         required: false
         type: string
-  workflow_call:
-    inputs:
-      checkout_ref:
-        description: "Git ref containing the Cloud Mail version to deploy"
+      cloudflare_account_id:
+        description: "Account ID（Token 仅能访问一个账户时留空自动识别）"
         required: false
         type: string
-        default: ""
-
+      d1_database_name:
+        description: "D1 名称（留空时与 Worker 名称相同）"
+        required: false
+        type: string
+      d1_database_id:
+        description: "已有 D1 ID（首次部署留空自动查找或创建）"
+        required: false
+        type: string
+      kv_namespace_id:
+        description: "已有 KV ID（首次部署留空自动查找或创建）"
+        required: false
+        type: string
+      r2_bucket_name:
+        description: "R2 桶名（留空关闭附件对象存储）"
+        required: false
+        type: string
+      project_link:
+        description: "界面项目链接（可选 HTTPS URL）"
+        required: false
+        type: string
+      ai_model:
+        description: "Workers AI 模型"
+        required: false
+        default: "@cf/meta/llama-3.1-8b-instruct-fast"
+        type: string
+      cors_origins:
+        description: '跨域 Origin JSON 数组；同源保持 []'
+        required: false
+        default: "[]"
+        type: string
+      auto_configure_email_routing:
+        description: "自动启用 Email Routing 并配置 Catch-all"
+        required: false
+        default: true
+        type: boolean
+      cloudflare_email:
+        description: "启用 Cloudflare Email 出站兼容绑定（LONGOS 模式请关闭）"
+        required: false
+        default: false
+        type: boolean
+      analysis_cache:
+        description: "启用邮件分析缓存"
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -42,30 +83,13 @@ concurrency:
 jobs:
   deploy-cloud-mail:
     name: 🏗️ Validate, test and deploy
+    # Public forks use their own repository and secrets. In this repository,
+    # only its owner may deploy the reviewed default branch to production.
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    env:
-      NAME: ${{ github.event.inputs.worker_name || secrets.NAME || vars.NAME || 'cloud-mail' }}
-      CUSTOM_DOMAIN: ${{ github.event.inputs.custom_domain || secrets.CUSTOM_DOMAIN || vars.CUSTOM_DOMAIN }}
-      DOMAIN: ${{ github.event.inputs.mail_domains || secrets.DOMAIN || vars.DOMAIN }}
-      ADMIN: ${{ github.event.inputs.admin_email || secrets.ADMIN || vars.ADMIN }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
-      D1_DATABASE_NAME: ${{ secrets.D1_DATABASE_NAME || vars.D1_DATABASE_NAME || secrets.NAME || vars.NAME || 'cloud-mail' }}
-      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
-      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
-      R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
-      PROJECT_LINK: ${{ secrets.PROJECT_LINK || vars.PROJECT_LINK }}
-      AI_MODEL: ${{ secrets.AI_MODEL || vars.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast' }}
-      CLOUDFLARE_EMAIL: ${{ secrets.CF_EMAIL || vars.CF_EMAIL || false }}
-      ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || false }}
-      LONGOS_RELAY_URL: ${{ github.event.inputs.longos_relay_url || secrets.LONGOS_RELAY_URL || vars.LONGOS_RELAY_URL }}
-      LONGOS_INTEGRATION_TOKEN: ${{ secrets.LONGOS_INTEGRATION_TOKEN }}
-      RELAY_SHARED_SECRET: ${{ secrets.RELAY_SHARED_SECRET }}
-      RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
-      CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || vars.CORS_ORIGINS || '[]' }}
+    environment:
+      name: production
 
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
@@ -74,7 +98,8 @@ jobs:
       - name: 🚚 检出代码仓库 / Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.checkout_ref || github.ref }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: ⚙ 设置 pnpm / Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -93,6 +118,33 @@ jobs:
       # Local deployment and GitHub Actions intentionally use the same
       # validated implementation so resource creation, secrets, migrations
       # and acceptance checks cannot drift apart.
+      - name: 🧪 无密钥安装、审计、测试与构建 / Secret-free verification
+        run: node scripts/verify-deployment.mjs
+
       - name: 🚀 一键验证并部署 / Validate and deploy
         id: deploy
-        run: node scripts/deploy-cloudflare.mjs --from-env
+        # Production credentials exist only for this step, after the protected
+        # environment has approved the owner-triggered default-branch job.
+        env:
+          NAME: ${{ inputs.worker_name }}
+          CUSTOM_DOMAIN: ${{ inputs.custom_domain }}
+          DOMAIN: ${{ inputs.mail_domains }}
+          ADMIN: ${{ inputs.admin_email }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+          D1_DATABASE_NAME: ${{ inputs.d1_database_name || inputs.worker_name }}
+          D1_DATABASE_ID: ${{ inputs.d1_database_id }}
+          KV_NAMESPACE_ID: ${{ inputs.kv_namespace_id }}
+          R2_BUCKET_NAME: ${{ inputs.r2_bucket_name }}
+          PROJECT_LINK: ${{ inputs.project_link }}
+          AI_MODEL: ${{ inputs.ai_model }}
+          CLOUDFLARE_EMAIL: ${{ inputs.cloudflare_email && 'true' || 'false' }}
+          ANALYSIS_CACHE: ${{ inputs.analysis_cache && 'true' || 'false' }}
+          LONGOS_RELAY_URL: ${{ inputs.longos_relay_url }}
+          LONGOS_INTEGRATION_TOKEN: ${{ inputs.longos_relay_url != '' && secrets.LONGOS_INTEGRATION_TOKEN || '' }}
+          RELAY_SHARED_SECRET: ${{ secrets.RELAY_SHARED_SECRET }}
+          RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+          CORS_ORIGINS: ${{ inputs.cors_origins }}
+          AUTO_CONFIGURE_EMAIL_ROUTING: ${{ inputs.auto_configure_email_routing && 'true' || 'false' }}
+        run: node scripts/deploy-cloudflare.mjs --from-env --skip-verification

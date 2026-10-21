@@ -20,12 +20,12 @@ Cloudflare Worker 不能直接连接公网 TCP 25，因此不能替代 SMTP 邮�
 
 ## 最推荐的部署方式
 
-不需要在电脑安装 Node.js，也不需要手工创建 D1、KV、R2 或 JWT 密钥。
+不需要手工创建 D1、KV、R2、JWT 密钥或 GitHub Actions Variables。
 
 1. 先在 LONGOS 主站后台创建一枚“Cloud Mail”系统集成令牌；
-2. 在本仓库 GitHub `Settings → Secrets and variables → Actions` 保存 2 个 Secret 和 4 个 Variable；
-3. 打开 `Actions → Deploy cloud-mail to Cloudflare Workers → Run workflow`；
-4. 在 Cloudflare Email Routing 中把 Catch-all 指向已部署的 Worker。
+2. 在 `Actions → Deploy cloud-mail to Cloudflare Workers → Run workflow` 中填写本次部署的全部非敏感配置；
+3. Cloudflare 与 LONGOS 密钥可在运行前保存到受保护的 `production` Environment，或运行 `node scripts/trigger-github-deployment.mjs` 在部署时隐藏输入并立即触发工作流；
+4. 使用推荐 Token 权限时，工作流会自动启用 Email Routing、把 Catch-all 指向 Worker，并读取 LONGOS 的公开 DNS 清单后直接发布发信 DKIM/DMARC、合并 SPF 与校准 DNS-only 邮件主机；Token 永远不会发送给 LONGOS，也无需保存到 Coolify。
 
 完整的逐项页面路径、API Token 权限、变量表、Cloudflare Email Routing、网站关联和验收方法都集中在：
 
@@ -34,6 +34,8 @@ Cloudflare Worker 不能直接连接公网 TCP 25，因此不能替代 SMTP 邮�
 部署器会自动：
 
 - 识别单一 Cloudflare Account；
+- 为 `DOMAIN` 中的每个域自动启用 Email Routing，并幂等配置 Catch-all 到当前 Worker；
+- 在 LONGOS 已配置时读取其公开 DNS 清单，由受保护的部署 Runner 直接完成出站邮件 DNS；Cloudflare Token 不会发送给 LONGOS；
 - 创建或复用 D1、KV 和可选 R2；
 - 自动生成并在升级时保留 JWT Secret；
 - 测试 Worker、构建前端并校验 LONGOS 邮件网关；
@@ -85,10 +87,15 @@ node scripts/deploy-cloudflare.mjs
 ## 安全与交付要求
 
 - 不要把 `CLOUDFLARE_API_TOKEN`、`LONGOS_INTEGRATION_TOKEN` 或 JWT 密钥写入仓库；
-- API Token 只授权目标账户和 Zone；
+- GitHub 手动工作流没有密文输入类型，因此密钥绝不作为 `workflow_dispatch` 文本字段；安全触发脚本通过标准输入把它们写入受保护的 `production` Environment，普通变量才进入部署表单；
+- 安装、审计、测试和构建全部在无密钥步骤完成，生产凭据只注入最终部署步骤；
+- Fork/PR 只运行只读无密钥验证；部署仅允许仓库所有者从默认分支手动运行，他人也不能重跑所有者的历史部署；
+- 只使用状态为 active 的 Cloudflare API Token，并仅授权目标账户和 Zone；Global API Key 不受支持，即使同时填写 Account ID 也不会放行；
 - 自建直投需要固定公网 IP、正确 PTR/rDNS，并允许出站 TCP 25；
 - SPF、DKIM、DMARC、EHLO A 记录和 PTR 必须一致；
 - 首次上线先完成外部收信、Cloud Mail 网页发信、LONGOS 下单邮件、弃单召回四项验收。
+
+凭据泄漏处置和安全报告方式见 [Security Policy](./SECURITY.md)。
 
 ## 来源与许可证
 

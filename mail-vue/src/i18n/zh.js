@@ -231,6 +231,7 @@ const zh = {
     minEmailPrefix: '邮箱名至少{msg}位',
     confirmPwdFailMsg: '两次密码输入不一致',
     emptyRegKeyMsg: '注册码不能为空',
+    invalidRegKeyMsg: '注册码必须为 8–64 位字母、数字、下划线或连字符',
     regSuccessMsg: '注册成功',
     copySuccessMsg: '复制成功',
     copyFailMsg: '复制失败',

@@ -8,13 +8,17 @@
 - Preserved the same relay request ID across browser retries, made send-limit reservation atomic under concurrent requests, and released reservations when an internal or rejected delivery fails.
 - Added matching browser and Worker limits for recipients, attachment count and decoded attachment size, plus strict outbound header/body validation and reply ownership checks.
 - Fixed Telegram email preview links with purpose-scoped, seven-day JWTs instead of trying to validate preview tokens as login sessions.
+- Made invite-code consumption atomic before account creation, fixed asynchronous role validation, bounded administrative input, and replaced predictable eight-character codes with rejection-sampled Web Crypto values.
 
 ### Operations
 
 - Added a public, non-sensitive `/api/health` readiness endpoint that verifies the required D1 state and KV binding, and made deployment validate it before and after retiring the initialization secret.
 - Added best-effort `INIT_SECRET` retirement on every post-deployment failure path and stable 404 responses for missing attachment/static objects.
+- Extended temporary `INIT_SECRET` retirement to process failures, `SIGINT`, and `SIGTERM`, while keeping Cloudflare's secret inventory authoritative over delayed edge propagation.
 - Isolated scheduled maintenance tasks so one cleanup failure no longer prevents the remaining recovery, cleanup, analytics, and OAuth jobs from running; failures are still surfaced after all tasks execute.
 - Removed the deprecated Cloudflare Vitest pool that was no longer used by the Node test suite, upgraded the active Worker/frontend toolchain, and pinned patched transitive build dependencies identified by the supply-chain audit.
+- Unified Worker, frontend, and relay installation, audit, test, and build checks in the deployment verifier; pinned CI to Ubuntu 24.04 and disabled retained checkout credentials in every job.
+- Updated Wrangler to 4.151.3 and Nodemailer to 10.1.7 with refreshed lockfiles and successful production dependency audits.
 
 ## v4.5.0 - 2026-10-20
 

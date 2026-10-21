@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const source = readFileSync(new URL('../.github/workflows/deploy-cloudflare.yml', import.meta.url), 'utf8');
 const validation = readFileSync(new URL('../.github/workflows/validate.yml', import.meta.url), 'utf8');
+const selfHosted = readFileSync(new URL('../.github/workflows/self-hosted-mail-engine-ci.yml', import.meta.url), 'utf8');
 const codeOwners = readFileSync(new URL('../.github/CODEOWNERS', import.meta.url), 'utf8');
 
 test('production deployment is owner-only and default-branch-only', () => {
@@ -18,6 +19,18 @@ test('checkout cannot retain a write credential and actions are immutable', () =
   assert.match(source, /persist-credentials: false/);
   for (const action of source.matchAll(/uses:\s*([^\s#]+)/g)) {
     assert.match(action[1], /@[a-f0-9]{40}$/i);
+  }
+});
+
+test('all CI jobs use a pinned runner image and discard checkout credentials', () => {
+  for (const workflow of [source, validation, selfHosted]) {
+    assert.doesNotMatch(workflow, /runs-on:\s+ubuntu-latest/);
+    assert.match(workflow, /runs-on:\s+ubuntu-24\.04/);
+    const checkouts = [...workflow.matchAll(/uses:\s*actions\/checkout@[a-f0-9]{40}[\s\S]*?(?=\n\s*- (?:name:|uses:)|$)/gi)];
+    assert.ok(checkouts.length > 0);
+    for (const checkout of checkouts) {
+      assert.match(checkout[0], /persist-credentials:\s*false/);
+    }
   }
 });
 

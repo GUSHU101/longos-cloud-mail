@@ -18,6 +18,7 @@ export default defineConfig({
 			'test/mail-provider.spec.js',
 			'test/oauth-service.spec.js',
 			'test/public-service.spec.js',
+			'test/reg-key-service.spec.js',
 			'test/resend-service.spec.js',
 			'test/session-service.spec.js',
 			'test/setting-service.spec.js',

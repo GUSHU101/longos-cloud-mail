@@ -75,7 +75,7 @@
             type="date"
             :placeholder="$t('validUntil')"
         />
-        <el-input-number v-model="addForm.count" :min="1" :max="99999" @keyup.enter="submit"/>
+        <el-input-number v-model="addForm.count" :min="1" :max="100000" @keyup.enter="submit"/>
         <el-button class="btn" type="primary" @click="submit" :loading="addLoading"
         >{{ $t('add') }}
         </el-button>
@@ -106,6 +106,7 @@ import {regKeyAdd, regKeyList, regKeyClearNotUse, regKeyDelete, regKeyHistory} f
 import {getTextWidth} from "@/utils/text.js";
 import dayjs from "dayjs";
 import {tzDayjs} from "@/utils/day.js";
+import {generateSecureCode} from "@/utils/secure-code.js";
 import {useI18n} from "vue-i18n";
 
 defineOptions({
@@ -269,7 +270,7 @@ async function copyCode(code) {
   } catch (err) {
     console.error('复制失败:', err);
     ElMessage({
-      message: '复制失败',
+      message: t('copyFailMsg'),
       type: 'error',
       plain: true,
     })
@@ -277,16 +278,7 @@ async function copyCode(code) {
 }
 
 function genCode() {
-  addForm.code = generateRandomCode()
-}
-
-function generateRandomCode(length = 8) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  addForm.code = generateSecureCode()
 }
 
 function clearNotUse() {
@@ -310,9 +302,19 @@ function submit() {
 
   if (addLoading.value) return
 
+  addForm.code = addForm.code.trim()
   if (!addForm.code) {
     ElMessage({
-      message: $('emptyRegKeyMsg'),
+      message: t('emptyRegKeyMsg'),
+      type: "error",
+      plain: true
+    })
+    return
+  }
+
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(addForm.code)) {
+    ElMessage({
+      message: t('invalidRegKeyMsg'),
       type: "error",
       plain: true
     })

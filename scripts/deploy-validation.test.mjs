@@ -14,6 +14,13 @@ test('uses a side-effect-free runtime probe and accepts only unauthorized as pro
   assert.match(source, /authorization_probe=1/);
   assert.match(source, /retiredInitCheck\.status === 401/);
 });
+test('retires the temporary initialization secret on failures and process termination', () => {
+  assert.match(source, /function runFailureCleanup\(\)/);
+  assert.match(source, /function fail\(message\) \{\s*runFailureCleanup\(\)/);
+  assert.match(source, /process\.once\('SIGINT'/);
+  assert.match(source, /process\.once\('SIGTERM'/);
+  assert.match(source, /process\.once\('exit',[\s\S]*runFailureCleanup\(\)/);
+});
 test('fails final acceptance for real inbound or outbound DNS errors', () => {
   assert.match(source, /LONGOS 发信 DNS 验收未通过/);
   assert.match(source, /收信域未完成自动配置/);
@@ -40,5 +47,8 @@ test('keeps production credentials out of dependency, test, audit and build subp
   assert.match(source, /deploy-cloudflare\\\.yml@/);
   assert.match(verifier, /mail-worker', 'install', '--frozen-lockfile/);
   assert.match(verifier, /mail-vue', 'run', 'build'/);
+  assert.match(verifier, /npm\(\['ci'\], \{cwd: relayRoot\}/);
+  assert.match(verifier, /npm\(\['audit', '--omit=dev', '--audit-level', 'moderate'\], \{cwd: relayRoot\}/);
+  assert.match(verifier, /npm\(\['test'\], \{cwd: relayRoot\}/);
   assert.match(verifier, /scripts\/workflow-security\.test\.mjs/);
 });

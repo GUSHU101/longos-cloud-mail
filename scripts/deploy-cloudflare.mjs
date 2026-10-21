@@ -29,19 +29,34 @@ try {
 }
 let failureCleanup = null;
 
-function fail(message) {
-	if (failureCleanup) {
-		const cleanup = failureCleanup;
-		failureCleanup = null;
-		try {
-			cleanup();
-		} catch (error) {
-			console.error(`[清理失败] ${error.message}`);
-		}
+function runFailureCleanup() {
+	if (!failureCleanup) return;
+	const cleanup = failureCleanup;
+	failureCleanup = null;
+	try {
+		cleanup();
+	} catch (error) {
+		console.error(`[清理失败] ${error.message}`);
 	}
+}
+
+function fail(message) {
+	runFailureCleanup();
   console.error(`\n[失败] ${message}`);
   process.exit(1);
 }
+
+function handleTermination(signal, exitCode) {
+	console.error(`\n[中断] 收到 ${signal}，正在撤销临时部署凭据。`);
+	runFailureCleanup();
+	process.exit(exitCode);
+}
+
+process.once('SIGINT', () => handleTermination('SIGINT', 130));
+process.once('SIGTERM', () => handleTermination('SIGTERM', 143));
+process.once('exit', exitCode => {
+	if (exitCode !== 0) runFailureCleanup();
+});
 
 const nodeMajor = Number(process.versions.node.split('.')[0]);
 if (!Number.isInteger(nodeMajor) || nodeMajor < 22) {

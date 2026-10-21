@@ -14,7 +14,7 @@ import saltHashUtils from '../utils/crypto-utils';
 import cryptoUtils from '../utils/crypto-utils';
 import turnstileService from './turnstile-service';
 import roleService from './role-service';
-import regKeyService from './reg-key-service';
+import regKeyService, { normalizeRegKeyCode } from './reg-key-service';
 import dayjs from 'dayjs';
 import { toUtc } from '../utils/date-uitil';
 import { t } from '../i18n/i18n.js';
@@ -27,6 +27,7 @@ const loginService = {
 
 		let { email, password, token, code } = params || {};
 		email = emailUtils.normalizeAddress(email);
+		code = normalizeRegKeyCode(code);
 
 		let { regKey, register, registerVerify, regVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c)
 
@@ -132,15 +133,18 @@ const loginService = {
 
 		const { salt, hash } = await saltHashUtils.hashPassword(password);
 
+		// Reserve a finite invite-code use before creating any account records.
+		// The conditional update in consume() prevents concurrent registrations
+		// from spending the same final use more than once.
+		if (regKey !== settingConst.regKey.CLOSE && type) {
+			await regKeyService.consume(c, code, 1);
+		}
+
 		const userId = await userService.insert(c, { email, regKeyId,password: hash, salt, type: type || defType });
 
 		await accountService.insert(c, { userId: userId, email, name: emailUtils.getName(email) });
 
 		await userService.updateUserInfo(c, userId, true);
-
-		if (regKey !== settingConst.regKey.CLOSE && type) {
-			await regKeyService.reduceCount(c, code, 1);
-		}
 
 		if (registerVerify === settingConst.registerVerify.COUNT && !regVerifyOpen) {
 			const row = await verifyRecordService.increaseRegCount(c);
@@ -168,7 +172,7 @@ const loginService = {
 		}
 
 		if (regKeyRow.count <= 0) {
-			throw new BizError(t('noRegKeyCount'));
+			throw new BizError(t('noRegKeyTotal'));
 		}
 
 		const today = toUtc().tz('Asia/Shanghai').startOf('day')

@@ -10,6 +10,11 @@ import { preflightCloudflareZones } from './cloudflare-preflight.mjs';
 import { configureEmailRouting } from './email-routing.mjs';
 import { syncLongosOutboundDns } from './longos-dns-sync.mjs';
 import { resolvePnpmCommand } from './pnpm-command.mjs';
+import {
+  resolveManagedR2BucketName,
+  selectCloudflareResource,
+  waitForCloudflareResource,
+} from './cloudflare-resource-state.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
@@ -178,16 +183,16 @@ async function fetchJson(url, options = {}) {
   return { response, text, body };
 }
 
-async function workerSecretNames(config, deploymentEnv) {
+async function workerSecretInventory(config, deploymentEnv) {
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${config.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${encodeURIComponent(config.NAME)}/secrets`;
   const { response, body, text } = await fetchJson(endpoint, {
     headers: { authorization: `Bearer ${deploymentEnv.CLOUDFLARE_API_TOKEN}` },
   });
-  if (response.status === 404) return new Set();
+  if (response.status === 404) return {exists: false, names: new Set()};
   if (!response.ok || body.success !== true || !Array.isArray(body.result)) {
     fail(`无法读取 Worker Secret 列表（HTTP ${response.status}）：${body.errors?.[0]?.message || text}`);
   }
-  return new Set(body.result.map(item => item?.name).filter(Boolean));
+  return {exists: true, names: new Set(body.result.map(item => item?.name).filter(Boolean))};
 }
 
 async function resolveCloudflareAccountId(config) {
@@ -220,6 +225,7 @@ const config = fromEnvironment
 config.NAME ||= 'cloud-mail';
 config.D1_DATABASE_NAME ||= config.NAME;
 config.AUTO_CONFIGURE_EMAIL_ROUTING ||= 'true';
+config.R2_BUCKET_NAME = resolveManagedR2BucketName(config.R2_BUCKET_NAME, config.NAME);
 const required = ['CLOUDFLARE_API_TOKEN', 'DOMAIN', 'ADMIN'];
 for (const key of required) if (!config[key]) fail(`${key} 不能为空。`);
 if (config.CLOUDFLARE_ACCOUNT_ID && !/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('CLOUDFLARE_ACCOUNT_ID 必须是 32 位十六进制 ID。');
@@ -356,47 +362,90 @@ if (skipVerification) {
 }
 
 console.log('\n[2/8] 创建或复用 Cloudflare D1');
-let d1Id = config.D1_DATABASE_ID;
-let d1Rows = jsonOutput(wrangler(['d1', 'list', '--json'], { env: deploymentEnv, capture: true }).stdout, 'D1 列表');
-if (d1Id) {
-  const pinnedDatabase = d1Rows.find(item => item.uuid === d1Id);
-  if (!pinnedDatabase) fail('D1_DATABASE_ID 不属于当前 Cloudflare 账户。');
-  if (pinnedDatabase.name !== config.D1_DATABASE_NAME) fail('D1_DATABASE_ID 与 D1_DATABASE_NAME 指向的数据库不一致。');
-} else {
-  const matchingDatabases = d1Rows.filter(item => item.name === config.D1_DATABASE_NAME);
-  if (matchingDatabases.length > 1) fail('发现多个同名 D1；请显式填写 D1_DATABASE_ID。');
-  let row = matchingDatabases[0];
-  if (!row) {
-    wrangler(['d1', 'create', config.D1_DATABASE_NAME], { env: deploymentEnv });
-    d1Rows = jsonOutput(wrangler(['d1', 'list', '--json'], { env: deploymentEnv, capture: true }).stdout, 'D1 列表');
-    row = d1Rows.find(item => item.name === config.D1_DATABASE_NAME);
-  }
-  d1Id = row?.uuid;
+const listD1 = () => jsonOutput(wrangler(['d1', 'list', '--json'], {
+  env: deploymentEnv, capture: true,
+}).stdout, 'D1 列表');
+const d1Selection = {
+  pinnedId: config.D1_DATABASE_ID,
+  expectedName: config.D1_DATABASE_NAME,
+  idField: 'uuid',
+  nameField: 'name',
+  label: 'D1',
+};
+let d1Row;
+try {
+  d1Row = selectCloudflareResource(listD1(), d1Selection);
+} catch (error) {
+  fail(error.message);
 }
+let d1State = 'reused';
+if (!d1Row) {
+  wrangler(['d1', 'create', config.D1_DATABASE_NAME], { env: deploymentEnv });
+  d1State = 'created';
+  try {
+    d1Row = await waitForCloudflareResource({list: listD1, selection: d1Selection});
+  } catch (error) {
+    fail(error.message);
+  }
+}
+const d1Id = d1Row?.uuid;
 if (!/^[a-f0-9-]{32,36}$/i.test(d1Id || '')) fail('无法确定 D1_DATABASE_ID。');
+console.log(`✓ D1 ${d1State === 'created' ? '已创建' : '已复用'}：${config.D1_DATABASE_NAME} (${d1Id})`);
 
 console.log('\n[3/8] 创建或复用 Cloudflare KV');
-let kvId = config.KV_NAMESPACE_ID;
-let kvRows = jsonOutput(wrangler(['kv', 'namespace', 'list'], { env: deploymentEnv, capture: true }).stdout, 'KV 列表');
-if (kvId) {
-  if (!kvRows.some(item => item.id === kvId)) fail('KV_NAMESPACE_ID 不属于当前 Cloudflare 账户。');
-} else {
-  const matchingNamespaces = kvRows.filter(item => item.title === config.NAME);
-  if (matchingNamespaces.length > 1) fail('发现多个同名 KV Namespace；请显式填写 KV_NAMESPACE_ID。');
-  let row = matchingNamespaces[0];
-  if (!row) {
-    wrangler(['kv', 'namespace', 'create', config.NAME], { env: deploymentEnv });
-    kvRows = jsonOutput(wrangler(['kv', 'namespace', 'list'], { env: deploymentEnv, capture: true }).stdout, 'KV 列表');
-    row = kvRows.find(item => item.title === config.NAME);
-  }
-  kvId = row?.id;
+const listKv = () => jsonOutput(wrangler(['kv', 'namespace', 'list'], {
+  env: deploymentEnv, capture: true,
+}).stdout, 'KV 列表');
+const kvSelection = {
+  pinnedId: config.KV_NAMESPACE_ID,
+  expectedName: config.NAME,
+  idField: 'id',
+  nameField: 'title',
+  label: 'KV',
+};
+let kvRow;
+try {
+  kvRow = selectCloudflareResource(listKv(), kvSelection);
+} catch (error) {
+  fail(error.message);
 }
+let kvState = 'reused';
+if (!kvRow) {
+  wrangler(['kv', 'namespace', 'create', config.NAME], { env: deploymentEnv });
+  kvState = 'created';
+  try {
+    kvRow = await waitForCloudflareResource({list: listKv, selection: kvSelection});
+  } catch (error) {
+    fail(error.message);
+  }
+}
+const kvId = kvRow?.id;
 if (!/^[a-f0-9]{32}$/i.test(kvId || '')) fail('无法确定 KV_NAMESPACE_ID。');
+console.log(`✓ KV ${kvState === 'created' ? '已创建' : '已复用'}：${config.NAME} (${kvId})`);
 
 console.log('\n[4/8] 创建或复用 Cloudflare R2');
+let r2State = 'disabled';
 if (config.R2_BUCKET_NAME) {
   const info = wrangler(['r2', 'bucket', 'info', config.R2_BUCKET_NAME], { env: deploymentEnv, capture: true, allowFailure: true });
-  if (info.status !== 0) wrangler(['r2', 'bucket', 'create', config.R2_BUCKET_NAME], { env: deploymentEnv });
+  if (info.status !== 0) {
+    wrangler(['r2', 'bucket', 'create', config.R2_BUCKET_NAME], { env: deploymentEnv });
+    r2State = 'created';
+    let visible = false;
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      const check = wrangler(['r2', 'bucket', 'info', config.R2_BUCKET_NAME], {
+        env: deploymentEnv, capture: true, allowFailure: true,
+      });
+      if (check.status === 0) {
+        visible = true;
+        break;
+      }
+      if (attempt < 8) await new Promise(resolveDelay => setTimeout(resolveDelay, 2_500));
+    }
+    if (!visible) fail(`R2 ${config.R2_BUCKET_NAME} 创建后未能通过读取验收；请确认 R2 已开通后重跑。`);
+  } else {
+    r2State = 'reused';
+  }
+  console.log(`✓ R2 ${r2State === 'created' ? '已创建' : '已复用'}：${config.R2_BUCKET_NAME}`);
 } else {
   console.log('未配置 R2_BUCKET_NAME，附件对象存储绑定将被关闭。');
 }
@@ -432,7 +481,9 @@ if (/^(true|1)$/i.test(config.CLOUDFLARE_EMAIL || '') && !config.LONGOS_INTEGRAT
 if (/\$\{[A-Z0-9_]+\}/.test(wranglerConfig)) fail('生成的 Wrangler 配置仍有未替换变量。');
 writeFileSync(generatedConfig, wranglerConfig, { encoding: 'utf8', mode: 0o600 });
 const initSecret = randomBytes(32).toString('hex');
-const existingSecretNames = await workerSecretNames(config, deploymentEnv);
+const existingWorkerInventory = await workerSecretInventory(config, deploymentEnv);
+const existingSecretNames = existingWorkerInventory.names;
+const workerState = existingWorkerInventory.exists ? 'updated' : 'created';
 const deploymentSecrets = { INIT_SECRET: initSecret };
 if (config.JWT_SECRET) {
   deploymentSecrets.jwt_secret = config.JWT_SECRET;
@@ -540,8 +591,8 @@ if (!publicCheck.ok) fail(`Worker 初始化完成，但公开配置验收失败�
 // INIT_SECRET is single-use deployment authority. Remove it after the schema
 // has passed final verification so a leaked historical value is useless.
 wrangler(['secret', 'delete', 'INIT_SECRET', '-c', generatedConfig], { env: deploymentEnv, input: 'y\n' });
-const secretsAfterRetirement = await workerSecretNames(config, deploymentEnv);
-if (secretsAfterRetirement.has('INIT_SECRET')) fail('Cloudflare Secret 列表中仍存在 INIT_SECRET，撤销没有完成。');
+const secretsAfterRetirement = await workerSecretInventory(config, deploymentEnv);
+if (secretsAfterRetirement.names.has('INIT_SECRET')) fail('Cloudflare Secret 列表中仍存在 INIT_SECRET，撤销没有完成。');
 failureCleanup = null;
 
 // `wrangler secret delete` creates and deploys a new Worker version, but edge
@@ -660,7 +711,20 @@ if (autoConfigureInbound && inboundRouting.warnings.length > 0) {
 }
 
 console.log(`\n[完成] Cloud Mail 已部署：${workerUrl}`);
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${workerUrl}\n`, 'utf8');
+console.log(`资源结果：Worker ${workerState === 'created' ? '已创建' : '已更新'}；D1 ${d1State === 'created' ? '已创建' : '已复用'}；KV ${kvState === 'created' ? '已创建' : '已复用'}；R2 ${r2State === 'disabled' ? '未启用' : r2State === 'created' ? '已创建' : '已复用'}。`);
+if (process.env.GITHUB_OUTPUT) {
+  appendFileSync(process.env.GITHUB_OUTPUT, [
+    `worker_url=${workerUrl}`,
+    `worker_state=${workerState}`,
+    `d1_database_id=${d1Id}`,
+    `d1_state=${d1State}`,
+    `kv_namespace_id=${kvId}`,
+    `kv_state=${kvState}`,
+    `r2_bucket_name=${config.R2_BUCKET_NAME}`,
+    `r2_state=${r2State}`,
+    '',
+  ].join('\n'), 'utf8');
+}
 if (!autoConfigureInbound) {
   console.log('Email Routing 自动配置已主动关闭；现有 MX 与 Catch-all 未被修改。');
 } else if (inboundRouting.manual.length === 0 && inboundRouting.warnings.length === 0) {

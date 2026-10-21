@@ -80,7 +80,7 @@ Node.js 必须为 22 或更高。向导会依次询问 Worker 名称、访问域
 - `管理员邮箱`：例如 `admin@example.com`，域必须属于收件域；
 - `管理员初始密码`：隐藏输入两次，必须为 12–30 个字符；首次部署会自动建号；
 - `LONGOS 主站邮件网关`：完整填写 `https://主站/_longos/mail-relay`；
-- R2 保持开启；已有生产 D1/KV 才进入高级选项固定其 ID。
+- R2 保持开启；向导会自动使用 `<Worker 名称>-attachments`。首次部署不要填写 D1/KV ID；已有生产资源迁移到本工具时才进入高级选项固定其 ID。
 
 ### 方式 B：GitHub Actions 网页部署（推荐团队审批）
 
@@ -117,11 +117,11 @@ LONGOS 一体化模式不要设置 `RESEND_WEBHOOK_SECRET` 或 `RELAY_SHARED_SEC
 1. 打开 GitHub 仓库的 `Actions`；
 2. 左侧选择 `Deploy cloud-mail to Cloudflare Workers`；
 3. 点击 `Run workflow`，分支保持默认分支；
-4. 在表单填写收件域、管理员邮箱、访问域和 LONGOS 网关；其余资源字段可接受默认值或留空自动创建；
+4. 在表单填写收件域、管理员邮箱、访问域和 LONGOS 网关；D1/KV ID 留空，R2 保持 `auto`，部署器会直接创建缺失资源；
 5. 保持“自动配置 Email Routing”开启，LONGOS 模式保持“Cloudflare Email 出站”关闭；
 6. 点击绿色 `Run workflow`，等待 `Validate, test and deploy` 全部变绿。
 
-工作流会自动测试、构建、创建或复用资源、校验 LONGOS 网关、部署 Worker、初始化/升级 D1，并在受一次性 `INIT_SECRET` 保护的初始化请求内创建缺失的管理员账户，随后验收公开接口、撤销一次性初始化权限，并为每个 `DOMAIN` 启用 Email Routing、把 Catch-all 指向当前 Worker。管理员密码经 HTTPS 发送后只保存 PBKDF2 哈希；不会写入 Worker Secret。重复部署若管理员已存在会保留原密码，不会被 Environment 中的初始值重置。随后部署器从 LONGOS 读取只包含公开 DKIM/SPF/DMARC/A/AAAA 值的清单，并由 GitHub Runner 直接调用 Cloudflare 完成写入；Cloudflare Token 不会发送到 LONGOS。重复运行是幂等升级，不会清空已有邮件。
+工作流会自动测试、构建，按名称查找 D1/KV/R2，缺失时直接创建并等待 Cloudflare 控制面可读，存在时安全复用；随后校验 LONGOS 网关、创建或更新 Worker、初始化/升级 D1，并在受一次性 `INIT_SECRET` 保护的初始化请求内创建缺失的管理员账户。它会继续验收公开接口、撤销一次性初始化权限，并为每个 `DOMAIN` 启用 Email Routing、把 Catch-all 指向当前 Worker。管理员密码经 HTTPS 发送后只保存 PBKDF2 哈希；不会写入 Worker Secret。重复部署若管理员已存在会保留原密码，不会被 Environment 中的初始值重置。最后部署器从 LONGOS 读取只包含公开 DKIM/SPF/DMARC/A/AAAA 值的清单，并由 GitHub Runner 直接调用 Cloudflare 完成写入；Cloudflare Token 不会发送到 LONGOS。GitHub 摘要会列出 Worker 创建/更新状态、D1/KV ID 和 R2 桶名。重复运行是幂等升级，不会清空已有邮件。
 
 失败时查看日志中第一条 `[失败]`，不要只看最后的退出码。修复权限、DNS 或网关后直接使用完全相同的名称与资源 ID 重跑：部署器会复用 D1/KV/R2，不会清空已有邮件。Worker 资源即使已经发布，只要收发信验收未完成，流程也不会显示为成功。
 
@@ -175,6 +175,7 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | `Authentication error [10000]` | Token 无效、过期、账户/Zone 资源范围错误，或误用了 Global API Key；重新创建最小权限 API Token |
 | 首次创建 Worker 被拒绝 | 新权限模型首次创建需要 Workers 产品范围 Admin；Worker 建成后可把 Token 降为 Editor |
 | R2 创建失败 | 先在 Cloudflare R2 页面接受条款/开通结算；桶名只能含小写字母、数字、连字符且为 3–63 位；不用附件可关闭 R2 |
+| D1/KV 创建后暂时查不到 | 新版会自动等待控制面同步；若等待后仍失败，不要删除已创建资源，直接用相同名称重跑 |
 | 预检找不到活动 Zone | 域名尚未 Active、位于另一个账户，或 Token 没有 Zone:Read/未包含该 Zone |
 | 自定义域 1014/1016 或证书超时 | 删除同名冲突 A/AAAA/CNAME，确认 Custom Domain Zone 与 Worker 在同一账户，然后用相同输入重跑 |
 | Email Routing 为 `misconfigured` | 检查根域是否残留其他 MX、是否存在多条 SPF；不要同时让其他邮箱服务和 Cloudflare 接管同一域收信 |

@@ -74,6 +74,7 @@ run(process.execPath, [
   '--test',
   'scripts/cloudflare-auth.test.mjs',
   'scripts/cloudflare-preflight.test.mjs',
+  'scripts/cloudflare-resource-state.test.mjs',
   'scripts/deploy-input-security.test.mjs',
   'scripts/email-routing.test.mjs',
   'scripts/frontend-security.test.mjs',

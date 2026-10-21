@@ -45,7 +45,7 @@
 | `DOMAIN` | `example.com` | 单域直接填写；多域可用逗号分隔或 JSON 数组 |
 | `ADMIN` | `admin@example.com` | 必须使用 `DOMAIN` 中的一个域名 |
 | `ADMIN_PASSWORD` | 12–30 字符强密码 | 仅首次创建管理员；已有管理员不会被重置 |
-| `R2_BUCKET_NAME` | `cloud-mail-attachments` | 全账户唯一的 R2 桶名 |
+| `R2_BUCKET_NAME` | `auto` | 自动派生 `<NAME>-attachments` 并创建/复用；留空关闭 |
 
 ## 3. 接入域名并取得 Account ID
 
@@ -90,7 +90,7 @@
 
 ### 5.1 D1 与 KV：推荐让工作流自动创建
 
-首次部署时可不设置 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`：
+首次部署不要设置 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`：
 
 - 工作流先查找名称为 `D1_DATABASE_NAME` 的 D1；没有才创建；
 - 工作流先查找名称为 `NAME` 的 KV；没有才创建；
@@ -104,7 +104,7 @@
 
 ### 5.2 R2：由部署工具或工作流自动创建
 
-填写 `R2_BUCKET_NAME` 后，引导工具或 GitHub Actions 会先查询同名桶，存在则复用，不存在才创建。Cloudflare 账户第一次使用 R2 时若要求接受服务条款或开通结算，请先在 Dashboard 的 R2 Object Storage 页面完成该账户级确认，然后重跑部署。
+保持 `R2_BUCKET_NAME=auto` 时，引导工具或 GitHub Actions 会从 Worker 名称派生 `<NAME>-attachments`。部署器先查询同名桶，存在则复用，不存在才创建，并在发布 Worker 前再次读取验收。Cloudflare 账户第一次使用 R2 时若要求接受服务条款或开通结算，请先在 Dashboard 的 R2 Object Storage 页面完成该账户级确认，然后重跑部署。
 
 R2 桶可以保持私有，附件由 Worker 读取。若不需要附件，可以不设置 `R2_BUCKET_NAME`，工作流会从部署配置中移除 R2 绑定。
 
@@ -131,7 +131,7 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 | `d1_database_name` | 否 | `cloud-mail` | 留空时与 Worker 名相同 |
 | `d1_database_id` | 生产升级建议 | D1 UUID | 首次可留空自动查找或创建 |
 | `kv_namespace_id` | 生产升级建议 | 32 位 KV ID | 首次可留空自动查找或创建 |
-| `r2_bucket_name` | 附件需要 | `cloud-mail-attachments` | 自动复用或创建；不用附件可留空 |
+| `r2_bucket_name` | 否 | `auto` | 默认自动命名、创建或复用；清空则关闭附件 |
 | `project_link` | 否 | 仓库 HTTPS 地址 | 页面中的项目链接 |
 | `ai_model` | 否 | `@cf/meta/llama-3.1-8b-instruct-fast` | 已提供默认值 |
 | `cors_origins` | 否 | `["https://admin.example.com"]` | 同源保持默认 `[]` |
@@ -237,7 +237,7 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 
 正常情况下最后显示 `[完成] Cloud Mail 已部署`。如果任何校验、测试、网关健康检查或初始化失败，本次工作流为失败状态，不应继续配置邮件路由。
 
-首次自动创建 D1/KV 后，建议在 Cloudflare Dashboard 复制真实 ID，并在以后部署表单的 `d1_database_id` 与 `kv_namespace_id` 中继续填写。这样即使修改 Worker 名，升级仍明确绑定原生产数据。
+首次自动创建 D1/KV 后，GitHub 部署摘要会显示真实 ID。只要保持 Worker 与 D1 名称不变，后续部署会自动复用，不要求重复填写 ID；只有迁移、改名或存在同名资源时才需要显式固定 `d1_database_id` 与 `kv_namespace_id`。
 
 ## 9. 验证 Worker、自定义域名和初始化结果
 

@@ -104,7 +104,7 @@ _dmarc.example.com        TXT   "v=DMARC1; p=none; rua=mailto:dmarc@example.com"
 | `d1_database_name` | `cloud-mail` | 默认与 Worker 名相同 |
 | `d1_database_id` | `...` | 首次可留空，由工作流查找或创建 |
 | `kv_namespace_id` | `...` | 首次可留空，由工作流查找或创建 |
-| `r2_bucket_name` | `cloud-mail-attachments` | 使用附件时填写 |
+| `r2_bucket_name` | `auto` | 默认自动命名并创建/复用附件桶；清空关闭 |
 | `project_link` | 仓库或站点地址 | 可选 |
 | `ai_model` | `@cf/meta/llama-3.1-8b-instruct-fast` | 默认值已提供 |
 | `cloudflare_email` | `false` | LONGOS 自建出站保持关闭 |
@@ -127,7 +127,7 @@ GitHub 没有密文 `workflow_dispatch` 输入类型，因此下列值不能放�
 
 `LONGOS_INTEGRATION_TOKEN` 只在 LONGOS 主站控制域名后台创建一次，权限限定为 `cloud-mail:send` 和 `cloud-mail:health`，即可服务全部有效租户。普通租户后台无需、也不会提供重复绑定。令牌由 LONGOS 使用 `APP_KEY` 加密保存，可在后台随时显示、复制，也可查看过期时间、最后调用时间、最后显示时间和显示次数并立即撤销。显示接口按管理员限流。工作流会自动维护 `jwt_secret` 并把该令牌写入 Cloudflare Worker Secret，不会放入 `wrangler.toml`、网页或 D1。部署最后从受保护的 LONGOS 端点读取只含公开值的邮件 DNS 清单，Cloudflare 写操作始终由 GitHub Runner 执行；Cloudflare Token 不会发送给 LONGOS，因此 Coolify 不必再保存第二份。旧版仅保存哈希的令牌需重新创建。轮换 `APP_KEY` 时须先把旧密钥加入 `APP_PREVIOUS_KEYS`；下一次显示令牌时 LONGOS 会自动使用当前密钥重新加密。`APP_KEY` 和仍在使用的旧密钥都必须纳入安全备份。
 
-首次部署可以不填 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`；工作流会优先查找与 `D1_DATABASE_NAME` 同名的 D1 和与 `NAME` 同名的 KV，不存在时才创建。已有生产数据时，建议显式填写原 D1/KV ID，避免绑定到新资源；`D1_DATABASE_NAME` 必须与该 ID 对应数据库的真实名称一致。
+首次部署不要填写 `D1_DATABASE_ID` 和 `KV_NAMESPACE_ID`，并保持 R2 为 `auto`；工作流会自动创建缺失的 D1、KV、R2 和 Worker，等待资源可读后再绑定。已有生产数据时，建议显式填写原 D1/KV ID，避免绑定到新资源；`D1_DATABASE_NAME` 必须与该 ID 对应数据库的真实名称一致。
 
 `LONGOS_RELAY_URL` 和 `LONGOS_INTEGRATION_TOKEN` 必须成对配置。创建令牌后可使用以下方式验证：
 

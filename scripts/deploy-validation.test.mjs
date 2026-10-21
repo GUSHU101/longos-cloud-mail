@@ -6,9 +6,16 @@ const source = readFileSync(new URL('./deploy-cloudflare.mjs', import.meta.url),
 const verifier = readFileSync(new URL('./verify-deployment.mjs', import.meta.url), 'utf8');
 
 test('treats the Cloudflare secret inventory as the authoritative revocation check', () => {
-  assert.match(source, /secretsAfterRetirement\.has\('INIT_SECRET'\).*fail/);
+  assert.match(source, /secretsAfterRetirement\.names\.has\('INIT_SECRET'\).*fail/);
   assert.match(source, /if \(!initSecretRetired\) \{[\s\S]*console\.warn/);
   assert.doesNotMatch(source, /if \(!initSecretRetired\) fail/);
+});
+
+test('creates or reuses managed resources and waits for control-plane visibility', () => {
+  assert.match(source, /waitForCloudflareResource\(\{list: listD1/);
+  assert.match(source, /waitForCloudflareResource\(\{list: listKv/);
+  assert.match(source, /R2 .*创建后未能通过读取验收/);
+  assert.match(source, /workerState = existingWorkerInventory\.exists \? 'updated' : 'created'/);
 });
 test('uses a side-effect-free runtime probe and accepts only unauthorized as propagated', () => {
   assert.match(source, /authorization_probe=1/);

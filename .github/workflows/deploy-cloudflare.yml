@@ -29,20 +29,21 @@ on:
         required: false
         type: string
       d1_database_name:
-        description: "D1 名称（留空时与 Worker 名称相同）"
+        description: "D1 名称（通常留空，自动使用 Worker 名并创建/复用）"
         required: false
         type: string
       d1_database_id:
-        description: "已有 D1 ID（首次部署留空自动查找或创建）"
+        description: "高级迁移：固定已有 D1 ID；首次部署必须留空"
         required: false
         type: string
       kv_namespace_id:
-        description: "已有 KV ID（首次部署留空自动查找或创建）"
+        description: "高级迁移：固定已有 KV ID；首次部署必须留空"
         required: false
         type: string
       r2_bucket_name:
-        description: "R2 桶名（3–63 位小写字母/数字/连字符；留空关闭附件存储）"
+        description: "R2 桶名；auto 自动命名并创建，清空则关闭附件存储"
         required: false
+        default: "auto"
         type: string
       project_link:
         description: "界面项目链接（可选 HTTPS URL）"
@@ -93,6 +94,9 @@ jobs:
 
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
+      d1_database_id: ${{ steps.deploy.outputs.d1_database_id }}
+      kv_namespace_id: ${{ steps.deploy.outputs.kv_namespace_id }}
+      r2_bucket_name: ${{ steps.deploy.outputs.r2_bucket_name }}
 
     steps:
       - name: 🚚 检出代码仓库 / Checkout repository
@@ -156,6 +160,13 @@ jobs:
         env:
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+          WORKER_STATE: ${{ steps.deploy.outputs.worker_state }}
+          D1_DATABASE_ID: ${{ steps.deploy.outputs.d1_database_id }}
+          D1_STATE: ${{ steps.deploy.outputs.d1_state }}
+          KV_NAMESPACE_ID: ${{ steps.deploy.outputs.kv_namespace_id }}
+          KV_STATE: ${{ steps.deploy.outputs.kv_state }}
+          R2_BUCKET_NAME: ${{ steps.deploy.outputs.r2_bucket_name }}
+          R2_STATE: ${{ steps.deploy.outputs.r2_state }}
         run: |
           {
             echo "## LONGOS Cloud Mail deployment"
@@ -163,6 +174,14 @@ jobs:
             if [[ "$DEPLOY_OUTCOME" == "success" ]]; then
               echo "✅ Worker、数据库初始化、临时密钥撤销、收信路由和发信 DNS 验收已通过。"
               [[ -n "$WORKER_URL" ]] && echo "- 地址：[$WORKER_URL]($WORKER_URL)"
+              echo "- Worker：$WORKER_STATE"
+              echo "- D1：$D1_STATE · \`$D1_DATABASE_ID\`"
+              echo "- KV：$KV_STATE · \`$KV_NAMESPACE_ID\`"
+              if [[ "$R2_STATE" == "disabled" ]]; then
+                echo "- R2：未启用"
+              else
+                echo "- R2：$R2_STATE · \`$R2_BUCKET_NAME\`"
+              fi
             else
               echo "❌ 部署或最终验收未通过。展开上方 **Validate and deploy**，从第一条 \`[失败]\` 开始处理；不要只看最后的退出码。"
               echo "- 修复权限、域名、网关或 DNS 后，用相同资源名称/ID 重跑；部署器会复用已有 D1、KV 和 R2。"

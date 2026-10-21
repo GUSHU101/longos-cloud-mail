@@ -46,6 +46,7 @@ node scripts/deploy-wizard.mjs
 - 为 `DOMAIN` 中的每个域自动启用 Email Routing，并幂等配置 Catch-all 到当前 Worker；
 - 在 LONGOS 已配置时读取其公开 DNS 清单，由受保护的部署 Runner 直接完成出站邮件 DNS；Cloudflare Token 不会发送给 LONGOS；
 - 创建或复用 D1、KV 和可选 R2；
+- 首次不填任何资源 ID：按名称自动创建 D1/KV，`R2=auto` 自动创建附件桶；升级安全复用并在摘要中显示实际 ID；
 - 自动生成并在升级时保留 JWT Secret；
 - 首次自动创建管理员与主邮箱，升级时保留已有密码；
 - 测试 Worker、构建前端并校验 LONGOS 邮件网关；

@@ -72,6 +72,11 @@ test('rejects R2 names that the Cloudflare API cannot create', () => {
   assert.match(result.stderr, /R2_BUCKET_NAME/);
 });
 
+test('accepts managed automatic R2 provisioning', () => {
+  const result = validate({R2_BUCKET_NAME: 'auto'});
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('validates the deployment-only administrator password boundary', () => {
   const tooShort = validate({ADMIN_PASSWORD: 'short'});
   assert.equal(tooShort.status, 1);

@@ -70,7 +70,8 @@ export function validateWizardConfiguration(inputs, secrets) {
   if (inputs.kv_namespace_id && !/^[a-f0-9]{32}$/i.test(inputs.kv_namespace_id)) {
     throw new Error('KV Namespace ID 必须是 32 位十六进制 ID。');
   }
-  if (inputs.r2_bucket_name && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(inputs.r2_bucket_name)) {
+  if (inputs.r2_bucket_name && inputs.r2_bucket_name.toLowerCase() !== 'auto'
+    && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(inputs.r2_bucket_name)) {
     throw new Error('R2 桶名只能包含小写字母、数字和连字符，长度为 3–63。');
   }
   if (inputs.project_link && !/^https:\/\/[A-Za-z0-9./?_=:%#-]+$/.test(inputs.project_link)) {
@@ -271,6 +272,7 @@ async function main() {
   const ref = args.ref || info.defaultBranch;
   console.log(`\n目标：${repository} @ ${ref}`);
   console.log('直接回车采用方括号中的安全默认值；密钥不会回显，也不会进入命令行参数。\n');
+  console.log('D1、KV、R2 和 Worker 无需预建；默认会按名称自动创建或复用。\n');
 
   const workerName = await question('Worker 名称', 'cloud-mail', true);
   const customDomain = await question('Cloud Mail 访问域名（可留空使用 workers.dev）');

@@ -178,6 +178,7 @@ async function main() {
 
   console.log('\n部署计划（不显示密钥）：');
   console.log(`- Worker：${inputs.worker_name}`);
+  console.log(`- 资源：Worker、D1、KV ${configureAdvanced ? '按填写值创建或复用' : '按名称自动创建或复用'}`);
   console.log(`- 页面：${inputs.custom_domain || 'workers.dev 自动地址'}`);
   console.log(`- 收件域：${inputs.mail_domains}`);
   console.log(`- 发信：${inputs.longos_relay_url ? 'LONGOS Postfix/OpenDKIM' : inputs.cloudflare_email ? 'Cloudflare Email 兼容模式' : '仅收信'}`);

@@ -68,6 +68,9 @@ test('rejects R2 bucket names that Cloudflare cannot create', () => {
     /R2 桶名/,
   );
 });
+test('accepts automatic R2 provisioning without exposing a resource ID', () => {
+  assert.equal(validateWizardConfiguration({...validInputs, r2_bucket_name: 'auto'}, validSecrets), true);
+});
 test('sends environment secrets over stdin and dispatches variables as JSON', () => {
   assert.match(source, /'secret', 'set', name,[\s\S]*'--env', PRODUCTION_ENVIRONMENT/);
   assert.match(source, /\], \{input: value, capture: true\}\);/);

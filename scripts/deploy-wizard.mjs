@@ -74,6 +74,7 @@ export function deploymentEnvironment(inputs, secrets, parentEnvironment = proce
     CUSTOM_DOMAIN: inputs.custom_domain,
     DOMAIN: inputs.mail_domains,
     ADMIN: inputs.admin_email,
+    ADMIN_PASSWORD: secrets.adminPassword,
     LONGOS_RELAY_URL: inputs.longos_relay_url,
     CLOUDFLARE_ACCOUNT_ID: inputs.cloudflare_account_id,
     D1_DATABASE_NAME: inputs.d1_database_name || inputs.worker_name,
@@ -107,7 +108,7 @@ function runDeployment(environment) {
 
 async function main() {
   console.log('LONGOS Cloud Mail 一次性安全部署向导');
-  console.log('密钥不回显、不写入仓库或 GitHub，且只传给本次部署子进程。\n');
+  console.log('Token 与管理员密码不回显、不写入仓库或 GitHub，且只传给本次部署子进程。\n');
 
   const workerName = await question('Worker 名称', 'cloud-mail', true);
   const customDomain = await question('Cloud Mail 访问域名（建议填写；不含 https://）');
@@ -146,6 +147,9 @@ async function main() {
   }
 
   console.log('\n请输入仅用于本次进程的密钥：');
+  const adminPassword = await hiddenQuestion('管理员初始密码（12–30 个字符）', true);
+  const adminPasswordConfirmation = await hiddenQuestion('再次输入管理员初始密码', true);
+  if (adminPassword !== adminPasswordConfirmation) throw new Error('两次输入的管理员密码不一致。');
   const cloudflareApiToken = await hiddenQuestion('Cloudflare API Token', true);
   const longosIntegrationToken = longosRelayUrl
     ? await hiddenQuestion('LONGOS 系统集成令牌', true)
@@ -169,7 +173,7 @@ async function main() {
     cloudflareEmail,
     analysisCache,
   });
-  const secrets = {cloudflareApiToken, longosIntegrationToken};
+  const secrets = {adminPassword, cloudflareApiToken, longosIntegrationToken};
   validateWizardConfiguration(inputs, secrets);
 
   console.log('\n部署计划（不显示密钥）：');

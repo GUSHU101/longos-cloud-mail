@@ -72,6 +72,7 @@ test('all non-secret deployment settings are supplied at dispatch time', () => {
   assert.match(source, /DOMAIN: \$\{\{ inputs\.mail_domains \}\}/);
   assert.match(source, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ inputs\.cloudflare_account_id \}\}/);
   assert.match(source, /LONGOS_INTEGRATION_TOKEN: \$\{\{ inputs\.longos_relay_url != '' && secrets\.LONGOS_INTEGRATION_TOKEN \|\| '' \}\}/);
+  assert.match(source, /ADMIN_PASSWORD: \$\{\{ secrets\.ADMIN_PASSWORD \}\}/);
 });
 
 test('all production changes have an explicit repository owner', () => {

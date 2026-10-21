@@ -30,7 +30,7 @@ Set-Location longos-cloud-mail
 node scripts/deploy-wizard.mjs
 ```
 
-向导会隐藏读取 Cloudflare 与 LONGOS 密钥，显示不含密钥的部署计划，随后完成依赖验证、D1/KV/R2、Worker、初始化、Email Routing、Catch-all 与发信 DNS 验收。密钥只进入本次子进程环境，不写 `.env`、GitHub、命令行参数或日志。
+向导会隐藏读取并确认管理员初始密码、Cloudflare 与 LONGOS 密钥，显示不含密钥的部署计划，随后完成依赖验证、D1/KV/R2、Worker、管理员建号、Email Routing、Catch-all 与发信 DNS 验收。密码和 Token 只进入本次子进程环境，不写 `.env`、GitHub、命令行参数、Worker Secret 或日志；重复部署不会重置已有管理员密码。
 
 需要团队审批、审计记录和集中发布时，再使用 `Actions → Deploy cloud-mail to Cloudflare Workers`。GitHub 手动工作流没有密文输入控件，所以该方式必须把密钥保存到受保护的 `production` Environment；`node scripts/trigger-github-deployment.mjs` 只是隐藏录入并触发工作流，不能把 GitHub Environment 变成一次性密钥存储。
 
@@ -47,6 +47,7 @@ node scripts/deploy-wizard.mjs
 - 在 LONGOS 已配置时读取其公开 DNS 清单，由受保护的部署 Runner 直接完成出站邮件 DNS；Cloudflare Token 不会发送给 LONGOS；
 - 创建或复用 D1、KV 和可选 R2；
 - 自动生成并在升级时保留 JWT Secret；
+- 首次自动创建管理员与主邮箱，升级时保留已有密码；
 - 测试 Worker、构建前端并校验 LONGOS 邮件网关；
 - 原子发布 Worker Secret；
 - 初始化/升级数据库，验收接口并撤销一次性初始化密钥。
@@ -101,7 +102,7 @@ node scripts/deploy-cloudflare.mjs
 
 ## 安全与交付要求
 
-- 不要把 `CLOUDFLARE_API_TOKEN`、`LONGOS_INTEGRATION_TOKEN` 或 JWT 密钥写入仓库；
+- 不要把 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`、`LONGOS_INTEGRATION_TOKEN` 或 JWT 密钥写入仓库；
 - GitHub 手动工作流没有密文输入类型，因此密钥绝不作为 `workflow_dispatch` 文本字段；一次性向导只使用当前进程，GitHub 触发脚本则通过标准输入把密钥写入受保护的 `production` Environment；
 - 安装、审计、测试和构建全部在无密钥步骤完成，生产凭据只注入最终部署步骤；
 - Fork/PR 只运行只读无密钥验证；部署仅允许仓库所有者从默认分支手动运行，他人也不能重跑所有者的历史部署；

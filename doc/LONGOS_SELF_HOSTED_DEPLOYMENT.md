@@ -118,6 +118,7 @@ GitHub 没有密文 `workflow_dispatch` 输入类型，因此下列值不能放�
 
 | 名称 | 值 |
 |---|---|
+| `ADMIN_PASSWORD` | 12–30 个字符的管理员初始密码；仅创建缺失账号，不覆盖已有密码 |
 | `CLOUDFLARE_API_TOKEN` | 能部署 Worker，并管理 D1/KV、自定义域、Email Routing 与发信 DNS 的受限令牌 |
 | `JWT_SECRET` | 通常不创建；首次自动生成并在升级时保留，主动轮换时才设置 |
 | `LONGOS_INTEGRATION_TOKEN` | 在 LONGOS 后台“系统集成令牌”创建的 Cloud Mail 令牌 |

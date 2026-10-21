@@ -39,6 +39,7 @@ test('keeps production credentials out of dependency, test, audit and build subp
   assert.match(source, /const verificationEnv = \{\.\.\.process\.env, CI: 'true'\}/);
   for (const secret of [
     'CLOUDFLARE_API_TOKEN',
+    'ADMIN_PASSWORD',
     'JWT_SECRET',
     'LONGOS_INTEGRATION_TOKEN',
     'RELAY_SHARED_SECRET',
@@ -59,4 +60,11 @@ test('keeps production credentials out of dependency, test, audit and build subp
   assert.match(verifier, /npm\(\['audit', '--omit=dev', '--audit-level', 'moderate'\], \{cwd: relayRoot\}/);
   assert.match(verifier, /npm\(\['test'\], \{cwd: relayRoot\}/);
   assert.match(verifier, /scripts\/workflow-security\.test\.mjs/);
+});
+
+test('bootstraps the administrator without persisting its password as a Worker secret', () => {
+  assert.match(source, /bootstrapAdmin: true/);
+  assert.match(source, /adminPassword: config\.ADMIN_PASSWORD \|\| ''/);
+  assert.doesNotMatch(source, /deploymentSecrets\.ADMIN_PASSWORD/);
+  assert.match(source, /重复部署不会覆盖原密码/);
 });

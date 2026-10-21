@@ -15,6 +15,7 @@ test('passes one-time credentials only through the deployment child environment'
     longosRelayUrl: 'https://shop.example.com/_longos/mail-relay',
   });
   const environment = deploymentEnvironment(inputs, {
+    adminPassword: 'correct horse battery',
     cloudflareApiToken: 'cf-token',
     longosIntegrationToken: `longos_it_${'a'.repeat(64)}`,
   }, {
@@ -25,6 +26,7 @@ test('passes one-time credentials only through the deployment child environment'
   });
 
   assert.equal(environment.CLOUDFLARE_API_TOKEN, 'cf-token');
+  assert.equal(environment.ADMIN_PASSWORD, 'correct horse battery');
   assert.equal(environment.LONGOS_INTEGRATION_TOKEN, `longos_it_${'a'.repeat(64)}`);
   assert.equal(environment.PATH, 'test-path');
   assert.equal(environment.NAME, 'cloud-mail');
@@ -38,4 +40,5 @@ test('does not persist or place credentials in command arguments', () => {
   assert.match(source, /spawnSync\(process\.execPath, \['scripts\/deploy-cloudflare\.mjs', '--from-env'\]/);
   assert.doesNotMatch(source, /writeFile|appendFile|\.cloud-mail\.deploy\.env/);
   assert.doesNotMatch(source, /--(?:token|secret|api-key)/i);
+  assert.match(source, /hiddenQuestion\('管理员初始密码/);
 });

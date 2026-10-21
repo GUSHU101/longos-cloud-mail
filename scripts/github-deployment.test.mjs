@@ -13,6 +13,7 @@ const validInputs = buildWorkflowInputs({
   longosRelayUrl: 'https://shop.example.com/_longos/mail-relay',
 });
 const validSecrets = {
+  adminPassword: 'correct horse battery',
   cloudflareApiToken: 'cloudflare-api-token-without-whitespace',
   longosIntegrationToken: `longos_it_${'a'.repeat(64)}`,
 };
@@ -51,8 +52,13 @@ test('validates required credentials without adding them to workflow dispatch da
     () => validateWizardConfiguration(validInputs, {...validSecrets, longosIntegrationToken: 'invalid'}),
     /LONGOS/,
   );
+  assert.throws(
+    () => validateWizardConfiguration(validInputs, {...validSecrets, adminPassword: 'short'}),
+    /管理员初始密码/,
+  );
   assert.equal(JSON.stringify(validInputs).includes(validSecrets.cloudflareApiToken), false);
   assert.equal(JSON.stringify(validInputs).includes(validSecrets.longosIntegrationToken), false);
+  assert.equal(JSON.stringify(validInputs).includes(validSecrets.adminPassword), false);
 });
 
 test('rejects R2 bucket names that Cloudflare cannot create', () => {
@@ -68,4 +74,5 @@ test('sends environment secrets over stdin and dispatches variables as JSON', ()
   assert.doesNotMatch(source, /'--body'/);
   assert.match(source, /'workflow', 'run', WORKFLOW_FILE,[\s\S]*'--json'/);
   assert.match(source, /input: `\$\{JSON\.stringify\(inputs\)\}\\n`/);
+  assert.match(source, /setEnvironmentSecret\(repository, 'ADMIN_PASSWORD', adminPassword\)/);
 });

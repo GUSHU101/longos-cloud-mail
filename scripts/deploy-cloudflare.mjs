@@ -209,7 +209,7 @@ async function resolveCloudflareAccountId(config) {
 const deploymentKeys = [
   'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'NAME', 'D1_DATABASE_NAME',
   'D1_DATABASE_ID', 'KV_NAMESPACE_ID', 'R2_BUCKET_NAME', 'CUSTOM_DOMAIN', 'DOMAIN',
-  'ADMIN', 'CORS_ORIGINS', 'JWT_SECRET', 'LONGOS_RELAY_URL', 'LONGOS_INTEGRATION_TOKEN',
+  'ADMIN', 'ADMIN_PASSWORD', 'CORS_ORIGINS', 'JWT_SECRET', 'LONGOS_RELAY_URL', 'LONGOS_INTEGRATION_TOKEN',
   'RELAY_SHARED_SECRET', 'CLOUDFLARE_EMAIL', 'ANALYSIS_CACHE', 'AI_MODEL', 'PROJECT_LINK',
   'RESEND_WEBHOOK_SECRET',
   'AUTO_CONFIGURE_EMAIL_ROUTING',
@@ -243,6 +243,13 @@ const corsOrigins = parseJsonArray(config.CORS_ORIGINS || '[]', 'CORS_ORIGINS').
 if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+$/.test(config.ADMIN)
   || !domains.includes(config.ADMIN.split('@').at(-1).toLowerCase())) {
   fail('ADMIN 必须是有效邮箱，并使用 DOMAIN 中的域名。');
+}
+config.ADMIN = config.ADMIN.toLowerCase();
+if (config.ADMIN_PASSWORD && (config.ADMIN_PASSWORD.length < 12 || config.ADMIN_PASSWORD.length > 30)) {
+  fail('ADMIN_PASSWORD 必须为 12–30 个字符；它只用于首次创建管理员，不会覆盖已有密码。');
+}
+if (config.ADMIN_PASSWORD && /\p{Cc}/u.test(config.ADMIN_PASSWORD)) {
+  fail('ADMIN_PASSWORD 不能包含控制字符。');
 }
 if (config.CUSTOM_DOMAIN) config.CUSTOM_DOMAIN = normalizeDomain(config.CUSTOM_DOMAIN, 'CUSTOM_DOMAIN');
 if (config.R2_BUCKET_NAME && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(config.R2_BUCKET_NAME)) {
@@ -327,6 +334,7 @@ if (config.LONGOS_RELAY_URL) {
 const verificationEnv = {...process.env, CI: 'true'};
 for (const secretName of [
   'CLOUDFLARE_API_TOKEN',
+  'ADMIN_PASSWORD',
   'JWT_SECRET',
   'LONGOS_INTEGRATION_TOKEN',
   'RELAY_SHARED_SECRET',
@@ -489,16 +497,24 @@ for (const [name, value] of Object.entries(configuredOptionalSecrets)) {
 
 console.log('\n[7/8] 初始化/升级数据库并验收');
 let initialized = false;
+let adminBootstrapStatus = '';
 for (let attempt = 1; attempt <= 12; attempt += 1) {
   try {
     const result = await fetchJson(`${workerUrl}/api/init`, {
       method: 'POST',
       headers: { authorization: `Bearer ${initSecret}`, 'content-type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({
+        bootstrapAdmin: true,
+        adminPassword: config.ADMIN_PASSWORD || '',
+      }),
     });
     if (result.response.ok && result.text === 'success') {
+      adminBootstrapStatus = result.response.headers.get('x-longos-admin-bootstrap') || 'verified';
       initialized = true;
       break;
+    }
+    if ([400, 409].includes(result.response.status)) {
+      fail(`管理员初始化失败（HTTP ${result.response.status}）：${result.text || '请检查 ADMIN 与 ADMIN_PASSWORD。'}`);
     }
     console.log(`初始化等待 ${attempt}/12：HTTP ${result.response.status}`);
   } catch (error) {
@@ -507,6 +523,13 @@ for (let attempt = 1; attempt <= 12; attempt += 1) {
   await new Promise(resolveDelay => setTimeout(resolveDelay, 10_000));
 }
 if (!initialized) fail('Worker 已发布，但自定义域或数据库初始化在两分钟内未就绪。可直接重跑同一命令。');
+if (adminBootstrapStatus === 'created') {
+  console.log(`✓ 已创建管理员 ${config.ADMIN}；可直接使用部署时输入的密码登录。`);
+} else if (adminBootstrapStatus === 'existing-account-repaired') {
+  console.log(`✓ 管理员 ${config.ADMIN} 已存在，并已修复缺失的主邮箱账户；原密码保持不变。`);
+} else {
+  console.log(`✓ 管理员 ${config.ADMIN} 已存在；为避免意外锁号，重复部署不会覆盖原密码。`);
+}
 let readinessCheck = await fetchJson(`${workerUrl}/api/health`);
 if (!readinessCheck.response.ok || readinessCheck.body.status !== 'ok') {
   fail(`Worker 初始化完成，但 D1/KV 就绪验收失败（HTTP ${readinessCheck.response.status}）。`);

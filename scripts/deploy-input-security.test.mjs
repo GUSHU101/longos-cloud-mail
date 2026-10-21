@@ -11,6 +11,7 @@ const validEnv = {
   CLOUDFLARE_API_TOKEN: 'validation-only-token',
   DOMAIN: 'example.com',
   ADMIN: 'admin@example.com',
+  ADMIN_PASSWORD: 'correct horse battery',
   NAME: 'cloud-mail',
   CORS_ORIGINS: '[]',
 };
@@ -69,4 +70,14 @@ test('rejects R2 names that the Cloudflare API cannot create', () => {
   const result = validate({R2_BUCKET_NAME: 'attachments.example.com'});
   assert.equal(result.status, 1);
   assert.match(result.stderr, /R2_BUCKET_NAME/);
+});
+
+test('validates the deployment-only administrator password boundary', () => {
+  const tooShort = validate({ADMIN_PASSWORD: 'short'});
+  assert.equal(tooShort.status, 1);
+  assert.match(tooShort.stderr, /ADMIN_PASSWORD/);
+
+  const tooLong = validate({ADMIN_PASSWORD: 'x'.repeat(31)});
+  assert.equal(tooLong.status, 1);
+  assert.match(tooLong.stderr, /ADMIN_PASSWORD/);
 });

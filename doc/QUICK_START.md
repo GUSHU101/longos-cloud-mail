@@ -71,13 +71,14 @@ node --version
 node scripts/deploy-wizard.mjs
 ```
 
-Node.js 必须为 22 或更高。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再隐藏输入两枚 Token。确认页只显示非敏感计划；执行时密钥只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数或日志。关闭终端后不留下部署凭据。
+Node.js 必须为 22 或更高。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再隐藏输入并二次确认管理员初始密码，同时隐藏读取所需 Token。确认页只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。关闭终端后不留下部署凭据。
 
 首次部署通常只需填写：
 
 - `Cloud Mail 访问域名`：例如 `mail.example.com`，不要带 `https://`；
 - `收件域`：例如 `example.com`；多个域用逗号分隔；
 - `管理员邮箱`：例如 `admin@example.com`，域必须属于收件域；
+- `管理员初始密码`：隐藏输入两次，必须为 12–30 个字符；首次部署会自动建号；
 - `LONGOS 主站邮件网关`：完整填写 `https://主站/_longos/mail-relay`；
 - R2 保持开启；已有生产 D1/KV 才进入高级选项固定其 ID。
 
@@ -88,11 +89,11 @@ GitHub 的 `workflow_dispatch` 没有 Secret 类型输入，因此密钥不能�
 1. 进入 `Settings → Environments → New environment` 创建 `production`；
 2. Deployment branches 只允许默认分支 `main`（或选择 Protected branches）；
 3. Required reviewers 选择仓库所有者；单人仓库不要启用“Prevent self-review”，否则无人能批准；
-4. 添加 Environment Secrets：`CLOUDFLARE_API_TOKEN`、`LONGOS_INTEGRATION_TOKEN`；仅收信时可省略后者；
+4. 添加 Environment Secrets：`ADMIN_PASSWORD`（12–30 个字符）、`CLOUDFLARE_API_TOKEN`、`LONGOS_INTEGRATION_TOKEN`；仅收信时可省略后者；
 5. 普通配置只在本次 **Run workflow** 表单填写，不创建任何 Actions Variables；
 6. `JWT_SECRET` 不填写，首次部署自动生成，升级自动保留。
 
-Environment Secret 是持久存储，不是一次性输入。若政策要求部署后不在 GitHub 保存密钥，请使用方式 A；不要把密钥伪装成 workflow 字符串输入。
+Environment Secret 是持久存储，不是一次性输入。首次部署变绿后可以删除 `ADMIN_PASSWORD`，以后升级只验证已有管理员，不需要再次提供；若政策要求部署后不在 GitHub 保存任何部署密钥，请使用方式 A；不要把密钥伪装成 workflow 字符串输入。
 
 ### 方式 C：隐藏录入并触发 GitHub Actions
 
@@ -103,7 +104,7 @@ gh auth login
 node scripts/trigger-github-deployment.mjs
 ```
 
-它通过标准输入调用 `gh secret set --env production`，再用 JSON 触发工作流，密钥不会进入命令行参数或工作流输入。但它们仍会作为 Environment Secrets 保存在 GitHub，直到管理员轮换或删除；需要真正零持久化时仍应选择方式 A。
+它会隐藏输入并确认管理员初始密码和 Token，通过标准输入调用 `gh secret set --env production`，再用 JSON 触发工作流，密钥不会进入命令行参数或工作流输入。但它们仍会作为 Environment Secrets 保存在 GitHub，直到管理员轮换或删除；需要真正零持久化时仍应选择方式 A。
 
 GitHub 部署会强制“仓库所有者 + 重跑人也是所有者 + 默认分支 + 手动运行”。外部 fork、PR 作者和普通协作者拿不到原仓库生产密钥。建议在 `Settings → Branches/Rules → main` 开启 PR、Code Owners 审核、`Secret-free verification` 必须通过和禁止 force push。
 
@@ -120,7 +121,7 @@ LONGOS 一体化模式不要设置 `RESEND_WEBHOOK_SECRET` 或 `RELAY_SHARED_SEC
 5. 保持“自动配置 Email Routing”开启，LONGOS 模式保持“Cloudflare Email 出站”关闭；
 6. 点击绿色 `Run workflow`，等待 `Validate, test and deploy` 全部变绿。
 
-工作流会自动测试、构建、创建或复用资源、校验 LONGOS 网关、部署 Worker、初始化/升级 D1、验收公开接口、撤销一次性初始化权限，并为每个 `DOMAIN` 启用 Email Routing、把 Catch-all 指向当前 Worker。随后它从 LONGOS 读取只包含公开 DKIM/SPF/DMARC/A/AAAA 值的清单，并由 GitHub Runner 直接调用 Cloudflare 完成写入；Cloudflare Token 不会发送到 LONGOS。重复运行是幂等升级，不会清空已有邮件。
+工作流会自动测试、构建、创建或复用资源、校验 LONGOS 网关、部署 Worker、初始化/升级 D1，并在受一次性 `INIT_SECRET` 保护的初始化请求内创建缺失的管理员账户，随后验收公开接口、撤销一次性初始化权限，并为每个 `DOMAIN` 启用 Email Routing、把 Catch-all 指向当前 Worker。管理员密码经 HTTPS 发送后只保存 PBKDF2 哈希；不会写入 Worker Secret。重复部署若管理员已存在会保留原密码，不会被 Environment 中的初始值重置。随后部署器从 LONGOS 读取只包含公开 DKIM/SPF/DMARC/A/AAAA 值的清单，并由 GitHub Runner 直接调用 Cloudflare 完成写入；Cloudflare Token 不会发送到 LONGOS。重复运行是幂等升级，不会清空已有邮件。
 
 失败时查看日志中第一条 `[失败]`，不要只看最后的退出码。修复权限、DNS 或网关后直接使用完全相同的名称与资源 ID 重跑：部署器会复用 D1/KV/R2，不会清空已有邮件。Worker 资源即使已经发布，只要收发信验收未完成，流程也不会显示为成功。
 
@@ -142,7 +143,7 @@ Email Routing 的 MX 用于**收信**，LONGOS 的 DKIM/DMARC/PTR 用于 Postfix
 ## 8. 首次登录与发信测试
 
 1. 访问 `https://CUSTOM_DOMAIN`；
-2. 用 `ADMIN` 邮箱注册并登录；
+2. 直接用部署时填写的 `ADMIN` 邮箱和管理员初始密码登录，无需再注册；
 3. 在系统设置中确认邮件引擎显示“LONGOS 内置邮件服务器”；该选项会由集成令牌锁定；
 4. 打开中继设置并运行“测试连接”；
 5. 创建一个属于已授权发件域的邮箱账户；
@@ -178,6 +179,8 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | 自定义域 1014/1016 或证书超时 | 删除同名冲突 A/AAAA/CNAME，确认 Custom Domain Zone 与 Worker 在同一账户，然后用相同输入重跑 |
 | Email Routing 为 `misconfigured` | 检查根域是否残留其他 MX、是否存在多条 SPF；不要同时让其他邮箱服务和 Cloudflare 接管同一域收信 |
 | 失败后已经出现 D1/KV/Worker | 属于可续跑状态，不要删除资源；用相同名称和已有 ID 重跑，部署器会幂等复用 |
+| 提示管理员初始密码缺失 | 新 D1 中还没有 `ADMIN` 用户；本地运行 `deploy-wizard.mjs` 隐藏输入，或在 `production` Environment 添加 `ADMIN_PASSWORD` 后重跑 |
+| 重跑后管理员密码没有变化 | 这是防误锁设计；部署密码只创建缺失账号，不覆盖已有账号。登录后在个人设置中修改密码 |
 | 日志曾出现 INIT_SECRET HTTP 200 | Cloudflare 边缘旧版本短暂传播；以 Secret 清单删除为准。新版只警告并继续，不再把成功撤销误判为部署失败 |
 | Worker 能收信但不能发信 | 检查 LONGOS 令牌、主站网关健康、服务器 TCP 25 和发件域授权 |
 | 403 发件域未授权 | 邮局未签名该域，或主站未把该域唯一分配给当前租户 |

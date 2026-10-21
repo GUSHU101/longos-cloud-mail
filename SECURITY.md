@@ -2,7 +2,7 @@
 
 ## Production credential boundary
 
-LONGOS Cloud Mail supports only a least-privilege Cloudflare API Token. Global API Keys are rejected. For one-time deployment, `node scripts/deploy-wizard.mjs` keeps credentials only in the current process and passes them to the deployer through its child environment; it does not write a configuration file, GitHub secret, command-line argument, or log. For GitHub Actions deployment, store production credentials in the protected GitHub `production` Environment, never in repository variables, workflow inputs, files, issues, screenshots, or logs. `node scripts/trigger-github-deployment.mjs` sends secret values to `gh secret set` through standard input and dispatches only non-secret JSON fields, but those Environment secrets remain stored until an administrator rotates or deletes them.
+LONGOS Cloud Mail supports only a least-privilege Cloudflare API Token. Global API Keys are rejected. For one-time deployment, `node scripts/deploy-wizard.mjs` keeps credentials and the initial administrator password only in the current process and passes them to the deployer through its child environment; it does not write a configuration file, GitHub secret, command-line argument, Worker secret, or log. The password is sent only through the one-time-secret-protected HTTPS initialization request and D1 stores its PBKDF2 hash. Repeated deployments never overwrite an existing administrator password. For GitHub Actions deployment, store production credentials in the protected GitHub `production` Environment, never in repository variables, workflow inputs, files, issues, screenshots, or logs. `node scripts/trigger-github-deployment.mjs` sends secret values to `gh secret set` through standard input and dispatches only non-secret JSON fields, but those Environment secrets remain stored until an administrator rotates or deletes them. `ADMIN_PASSWORD` may be deleted from the Environment after the first successful deployment because upgrades only verify the existing administrator.
 
 Forks and pull requests run only `.github/workflows/validate.yml`, which has read-only repository permission and receives no production secrets. Production deployment is manual, default-branch-only, repository-owner-only, re-run-owner-only, and protected by the `production` Environment. Dependency installation, audit, tests, and builds finish before the deployment step receives secrets.
 
@@ -20,7 +20,8 @@ If a credential may have leaked:
 2. Revoke the LONGOS integration token in the control-site administration panel and create a replacement.
 3. Replace both secrets in the GitHub `production` Environment and remove any duplicate repository-level secrets.
 4. Re-run the production deployment from the protected default branch.
-5. Rotate `JWT_SECRET` only when it may have leaked; doing so signs every Cloud Mail user out.
-6. Review GitHub Actions runs, Cloudflare audit logs, LONGOS integration-token usage, and mail relay logs.
+5. If `ADMIN_PASSWORD` may have leaked and it is still the current login password, change it in Cloud Mail immediately and delete the Environment secret.
+6. Rotate `JWT_SECRET` only when it may have leaked; doing so signs every Cloud Mail user out.
+7. Review GitHub Actions runs, Cloudflare audit logs, LONGOS integration-token usage, and mail relay logs.
 
 Never commit a replacement credential while attempting to remove an exposed one. Repository history and forks may retain old commits, so revocation is mandatory.

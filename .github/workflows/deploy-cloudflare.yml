@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       admin_email:
-        description: "Cloud Mail 管理员邮箱，域名必须属于上面的收件域"
+        description: "Cloud Mail 管理员邮箱；首次由 ADMIN_PASSWORD 自动建号"
         required: true
         type: string
       longos_relay_url:
@@ -130,6 +130,7 @@ jobs:
           CUSTOM_DOMAIN: ${{ inputs.custom_domain }}
           DOMAIN: ${{ inputs.mail_domains }}
           ADMIN: ${{ inputs.admin_email }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}

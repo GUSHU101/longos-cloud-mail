@@ -103,6 +103,11 @@ export function validateWizardConfiguration(inputs, secrets) {
   if (!secrets.cloudflareApiToken || secrets.cloudflareApiToken.length < 20 || /\s/.test(secrets.cloudflareApiToken)) {
     throw new Error('Cloudflare API Token 不能为空或包含空白字符。');
   }
+  if (typeof secrets.adminPassword !== 'string'
+    || secrets.adminPassword.length < 12 || secrets.adminPassword.length > 30
+    || /\p{Cc}/u.test(secrets.adminPassword)) {
+    throw new Error('管理员初始密码必须为 12–30 个字符，且不能包含控制字符。');
+  }
   if (inputs.longos_relay_url) {
     let relay;
     try {
@@ -304,6 +309,9 @@ async function main() {
   }
 
   console.log('\n请输入本次部署密钥：');
+  const adminPassword = await hiddenQuestion('管理员初始密码（12–30 个字符）', true);
+  const adminPasswordConfirmation = await hiddenQuestion('再次输入管理员初始密码', true);
+  if (adminPassword !== adminPasswordConfirmation) throw new Error('两次输入的管理员密码不一致。');
   const cloudflareApiToken = await hiddenQuestion('Cloudflare API Token', true);
   const longosIntegrationToken = longosRelayUrl
     ? await hiddenQuestion('LONGOS 系统集成令牌', true)
@@ -327,7 +335,7 @@ async function main() {
     cloudflareEmail,
     analysisCache,
   });
-  const secrets = {cloudflareApiToken, longosIntegrationToken};
+  const secrets = {adminPassword, cloudflareApiToken, longosIntegrationToken};
   validateWizardConfiguration(inputs, secrets);
 
   const createdEnvironment = ensureProductionEnvironment(repository);
@@ -335,6 +343,7 @@ async function main() {
     console.log(`✓ 已创建 ${PRODUCTION_ENVIRONMENT} Environment；工作流自身仍强制仓库所有者和默认分支。`);
   }
   setEnvironmentSecret(repository, 'CLOUDFLARE_API_TOKEN', cloudflareApiToken);
+  setEnvironmentSecret(repository, 'ADMIN_PASSWORD', adminPassword);
   if (longosRelayUrl) setEnvironmentSecret(repository, 'LONGOS_INTEGRATION_TOKEN', longosIntegrationToken);
 
   runGh([

@@ -44,6 +44,7 @@
 | `CUSTOM_DOMAIN` | `mail.example.com` | 不含 `https://` 和路径 |
 | `DOMAIN` | `example.com` | 单域直接填写；多域可用逗号分隔或 JSON 数组 |
 | `ADMIN` | `admin@example.com` | 必须使用 `DOMAIN` 中的一个域名 |
+| `ADMIN_PASSWORD` | 12–30 字符强密码 | 仅首次创建管理员；已有管理员不会被重置 |
 | `R2_BUCKET_NAME` | `cloud-mail-attachments` | 全账户唯一的 R2 桶名 |
 
 ## 3. 接入域名并取得 Account ID
@@ -148,10 +149,13 @@ GitHub 手动工作流没有 Secret 类型的输入字段，不要把密钥伪�
 
 | Secret | 必填 | 说明 |
 |---|---:|---|
+| `ADMIN_PASSWORD` | 首次部署 | 管理员初始密码；只经初始化请求使用，不会保存为 Worker Secret；重复部署不覆盖原密码 |
 | `CLOUDFLARE_API_TOKEN` | 是 | 第 4 节创建的 Token；网页或安全向导在部署时提交 |
 | `JWT_SECRET` | 否 | 留空时首次自动生成，升级保留；仅主动轮换时设置 |
 | `LONGOS_INTEGRATION_TOKEN` | 仅 LONGOS 发信 | 在 LONGOS 后台创建；与表单的 `longos_relay_url` 成对使用 |
 | `RESEND_WEBHOOK_SECRET` | 仅 Resend 状态回调 | Resend 为 Webhook 签发的 `whsec_...` 密钥，不能使用 API Token 代替 |
+
+首次部署成功后可以从 `production` Environment 删除 `ADMIN_PASSWORD`。后续升级会验证并保留已有管理员；只有更换 `ADMIN` 且新地址尚无账户时才需要重新添加初始密码。
 
 如需主动轮换 `JWT_SECRET`（会注销现有会话），可生成新值：
 
@@ -167,7 +171,7 @@ $bytes = New-Object byte[] 32
 [Convert]::ToHexString($bytes).ToLowerInvariant()
 ```
 
-不要把 `JWT_SECRET` 当成管理员登录密码。通常不要创建它：工作流首次部署自动生成 Worker Secret，升级时保留原值。工作流还会为每次部署自动生成独立的 `INIT_SECRET`，仅在本次数据库初始化期间存在，验收成功后立即撤销。首次初始化只建表；部署完成后用 `ADMIN` 地址在注册页面创建账户，该账户会被识别为管理员。
+不要把 `JWT_SECRET` 当成管理员登录密码。通常不要创建它：工作流首次部署自动生成 Worker Secret，升级时保留原值。工作流还会为每次部署自动生成独立的 `INIT_SECRET`，仅在本次数据库初始化期间存在，验收成功后立即撤销。初始化会在 `ADMIN` 尚不存在时用 `ADMIN_PASSWORD` 自动创建管理员和主邮箱；密码经 HTTPS 发送后只保存 PBKDF2 哈希，不会保存成 Worker Secret。已有管理员的密码绝不被重复部署覆盖。
 
 ### 6.3 配置 Resend 投递状态回调（仅使用 Resend 时）
 
@@ -292,16 +296,16 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 
 ## 11. 创建管理员并完成应用设置
 
-1. 打开 Cloud Mail 注册页；
-2. 使用 `ADMIN` 中配置的完整邮箱地址注册；
-3. 登录后进入系统设置；
+1. 打开 Cloud Mail 登录页；
+2. 使用 `ADMIN` 与部署时隐藏输入的 `ADMIN_PASSWORD` 直接登录，无需注册；
+3. 登录后建议在个人设置中确认或修改密码；
 4. 检查允许注册、允许收信、角色可用域名、发件次数等限制；
 5. 创建一个测试邮箱账户；
 6. LONGOS 一体化部署会自动锁定“LONGOS 内置邮件服务器”，不允许静默回退第三方；
 7. 使用 LONGOS 时确认中继 URL 与本次部署输入一致；
 8. 不要把 `JWT_SECRET` 或 `LONGOS_INTEGRATION_TOKEN` 填入网页设置。
 
-管理员身份由 `ADMIN` 环境变量中的地址判定。更改 `ADMIN` 后，只有新地址会拥有平台管理员旁路权限；因此变更前先确保新地址已注册并能登录。
+管理员身份由 `ADMIN` 环境变量中的地址判定。更改 `ADMIN` 后，部署器会在新地址不存在时创建它；若该地址已存在则保留其原密码。变更前仍应确认新地址归属正确，避免把已有普通用户提升为管理员。
 
 ## 12. 上线验收
 
@@ -309,7 +313,7 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 
 - 首页和 `/api/setting/websiteConfig` 可访问；
 - GitHub Actions 的初始化步骤返回 `success`；
-- 管理员可注册、登录并打开系统设置；
+- 管理员可直接登录并打开系统设置；
 - 可创建 `DOMAIN` 下的邮箱账户；
 - 从外部邮箱发到测试地址，Cloud Mail 中能看到邮件；
 - 回复或新建邮件时，`From` 是当前选中的邮箱，而非统一平台地址；

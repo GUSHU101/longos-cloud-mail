@@ -1,6 +1,7 @@
 import settingService from '../service/setting-service';
 import emailUtils from '../utils/email-utils';
 import {emailConst} from "../const/entity-const";
+import { bootstrapAdmin } from '../service/admin-bootstrap-service';
 
 const encoder = new TextEncoder();
 
@@ -99,6 +100,12 @@ const dbInit = {
 		if (isInitAuthorizationProbe(c)) {
 			return c.body(null, 204, { 'cache-control': 'no-store' });
 		}
+		let options = {};
+		try {
+			options = await c.req.json();
+		} catch {
+			// Compatibility with older deployers that sent an empty body.
+		}
 
 		await this.intDB(c);
 		await this.v1_1DB(c);
@@ -125,7 +132,22 @@ const dbInit = {
 		await this.v3_5DB(c);
 		await assertRequiredSchema(c);
 		await settingService.refresh(c);
-		return c.text('success', 200, { 'cache-control': 'no-store' });
+		let adminBootstrapStatus = 'skipped';
+		if (options?.bootstrapAdmin === true) {
+			try {
+				const result = await bootstrapAdmin(c, options.adminPassword);
+				adminBootstrapStatus = result.status;
+			} catch (error) {
+				if (error?.name === 'BizError') {
+					return c.text(error.message, error.code || 400, { 'cache-control': 'no-store' });
+				}
+				throw error;
+			}
+		}
+		return c.text('success', 200, {
+			'cache-control': 'no-store',
+			'x-longos-admin-bootstrap': adminBootstrapStatus,
+		});
 	},
 
 	async v3_5DB(c) {

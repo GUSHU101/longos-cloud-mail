@@ -30,7 +30,7 @@ Set-Location longos-cloud-mail
 node scripts/deploy-wizard.mjs
 ```
 
-向导会隐藏读取并确认管理员初始密码、Cloudflare 与 LONGOS 密钥，显示不含密钥的部署计划，随后完成依赖验证、D1/KV/R2、Worker、管理员建号、Email Routing、Catch-all 与发信 DNS 验收。密码和 Token 只进入本次子进程环境，不写 `.env`、GitHub、命令行参数、Worker Secret 或日志；重复部署不会重置已有管理员密码。
+向导会以可见文本读取并确认管理员初始密码、Cloudflare 与 LONGOS 密钥，方便部署者直接核对；部署计划和后续日志仍不显示密钥。随后会完成依赖验证、D1/KV/R2、Worker、管理员建号、Email Routing、Catch-all 与发信 DNS 验收。密码和 Token 只进入本次子进程环境，不写 `.env`、GitHub、命令行参数、Worker Secret 或日志；重复部署不会重置已有管理员密码。请只在本人可见且不录屏、不共享的终端中运行。
 
 需要团队审批、审计记录和集中发布时，再使用 `Actions → Deploy cloud-mail to Cloudflare Workers`。GitHub 手动工作流没有密文输入控件，所以该方式必须把密钥保存到受保护的 `production` Environment；`node scripts/trigger-github-deployment.mjs` 只是隐藏录入并触发工作流，不能把 GitHub Environment 变成一次性密钥存储。
 

@@ -40,5 +40,6 @@ test('does not persist or place credentials in command arguments', () => {
   assert.match(source, /spawnSync\(process\.execPath, \['scripts\/deploy-cloudflare\.mjs', '--from-env'\]/);
   assert.doesNotMatch(source, /writeFile|appendFile|\.cloud-mail\.deploy\.env/);
   assert.doesNotMatch(source, /--(?:token|secret|api-key)/i);
-  assert.match(source, /hiddenQuestion\('管理员初始密码/);
+  assert.match(source, /question\('管理员初始密码/);
+  assert.doesNotMatch(source, /hiddenQuestion|setRawMode|emitKeypressEvents/);
 });

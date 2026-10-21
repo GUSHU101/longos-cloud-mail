@@ -297,7 +297,7 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 ## 11. 创建管理员并完成应用设置
 
 1. 打开 Cloud Mail 登录页；
-2. 使用 `ADMIN` 与部署时隐藏输入的 `ADMIN_PASSWORD` 直接登录，无需注册；
+2. 使用 `ADMIN` 与部署时输入的 `ADMIN_PASSWORD` 直接登录，无需注册；
 3. 登录后建议在个人设置中确认或修改密码；
 4. 检查允许注册、允许收信、角色可用域名、发件次数等限制；
 5. 创建一个测试邮箱账户；
@@ -330,7 +330,7 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 node scripts/deploy-wizard.mjs
 ```
 
-它隐藏读取 Token，并只通过子进程环境运行统一部署器。以下配置文件方式适合自动化或排障；真实文件会被 Git 忽略，但仍会在磁盘保存明文凭据：
+它会在当前终端以可见文本读取 Token，方便本人核对，但部署摘要和后续日志不会回显；凭据只通过子进程环境运行统一部署器，不会写入文件。请勿在共享终端、录屏或直播环境使用。以下配置文件方式适合自动化或排障；真实文件会被 Git 忽略，但仍会在磁盘保存明文凭据：
 
 ```bash
 cp .cloud-mail.deploy.env.example .cloud-mail.deploy.env

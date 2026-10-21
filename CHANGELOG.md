@@ -12,6 +12,7 @@
 
 ### Operations
 
+- Made local-wizard credential entry visible for owner-operated deployments while retaining password confirmation and keeping credentials out of files, GitHub, command arguments, deployment summaries, and subsequent logs.
 - Removed the local wizard's hard dependency on pnpm/Corepack: Node.js installations with npm now bootstrap the CI-pinned pnpm version in an isolated temporary directory, disable package install scripts, strip deployment credentials from the npm environment, validate the downloaded entrypoint, reuse it during verification, and delete it on exit.
 - Added secure administrator bootstrap: deployment wizards hide and confirm the initial password, the one-time initialization request creates a missing administrator and primary mailbox, and repeat deployments preserve existing credentials.
 - Made Cloudflare storage fully managed by default: D1, KV, and automatic R2 names are created when absent, reused without data loss on upgrades, polled until visible after creation, and reported with their final IDs in the deployment summary.

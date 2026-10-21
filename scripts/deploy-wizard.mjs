@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import {spawnSync} from 'node:child_process';
-import {emitKeypressEvents} from 'node:readline';
 import {createInterface} from 'node:readline/promises';
 import {fileURLToPath} from 'node:url';
 import {dirname, resolve} from 'node:path';
@@ -31,40 +30,6 @@ async function confirm(label, defaultValue) {
   if (['y', 'yes', '是'].includes(answer)) return true;
   if (['n', 'no', '否'].includes(answer)) return false;
   throw new Error(`${label} 只能回答 y 或 n。`);
-}
-
-async function hiddenQuestion(label, required) {
-  if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== 'function') {
-    throw new Error('密钥只能在交互式终端中隐藏输入；请在 PowerShell、Terminal 或 bash 中运行。');
-  }
-  process.stdout.write(`${label}${required ? '' : '（留空跳过）'}: `);
-  emitKeypressEvents(process.stdin);
-  const wasRaw = process.stdin.isRaw;
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-
-  return new Promise((resolveSecret, rejectSecret) => {
-    let value = '';
-    const finish = error => {
-      process.stdin.off('keypress', onKeypress);
-      process.stdin.setRawMode(Boolean(wasRaw));
-      process.stdin.pause();
-      process.stdout.write('\n');
-      if (error) rejectSecret(error);
-      else if (required && !value) rejectSecret(new Error(`${label}不能为空。`));
-      else resolveSecret(value);
-    };
-    const onKeypress = (text, key = {}) => {
-      if (key.ctrl && key.name === 'c') return finish(new Error('已取消部署。'));
-      if (key.name === 'return' || key.name === 'enter') return finish();
-      if (key.name === 'backspace') {
-        value = value.slice(0, -1);
-        return;
-      }
-      if (!key.ctrl && !key.meta && text && !/[\r\n]/.test(text)) value += text;
-    };
-    process.stdin.on('keypress', onKeypress);
-  });
 }
 
 export function deploymentEnvironment(inputs, secrets, parentEnvironment = process.env) {
@@ -108,7 +73,7 @@ function runDeployment(environment) {
 
 async function main() {
   console.log('LONGOS Cloud Mail 一次性安全部署向导');
-  console.log('Token 与管理员密码不回显、不写入仓库或 GitHub，且只传给本次部署子进程。\n');
+  console.log('Token 与管理员密码会在本终端回显，便于核对；不会写入仓库或 GitHub，只传给本次部署子进程。\n');
 
   const workerName = await question('Worker 名称', 'cloud-mail', true);
   const customDomain = await question('Cloud Mail 访问域名（建议填写；不含 https://）');
@@ -146,13 +111,13 @@ async function main() {
     analysisCache = await confirm('启用邮件分析缓存', false);
   }
 
-  console.log('\n请输入仅用于本次进程的密钥：');
-  const adminPassword = await hiddenQuestion('管理员初始密码（12–30 个字符）', true);
-  const adminPasswordConfirmation = await hiddenQuestion('再次输入管理员初始密码', true);
+  console.log('\n请输入仅用于本次进程的密钥（输入内容可见）：');
+  const adminPassword = await question('管理员初始密码（12–30 个字符）', '', true);
+  const adminPasswordConfirmation = await question('再次输入管理员初始密码', '', true);
   if (adminPassword !== adminPasswordConfirmation) throw new Error('两次输入的管理员密码不一致。');
-  const cloudflareApiToken = await hiddenQuestion('Cloudflare API Token', true);
+  const cloudflareApiToken = await question('Cloudflare API Token', '', true);
   const longosIntegrationToken = longosRelayUrl
-    ? await hiddenQuestion('LONGOS 系统集成令牌', true)
+    ? await question('LONGOS 系统集成令牌', '', true)
     : '';
 
   const inputs = buildWorkflowInputs({

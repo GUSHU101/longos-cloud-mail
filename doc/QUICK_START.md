@@ -71,16 +71,16 @@ node --version
 node scripts/deploy-wizard.mjs
 ```
 
-Node.js 必须为 22 或更高并包含 npm。无需先运行 `corepack enable` 或全局安装 pnpm；缺少 pnpm/Corepack 时，向导会自动准备固定版本。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再隐藏输入并二次确认管理员初始密码，同时隐藏读取所需 Token。确认页只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。关闭终端后不留下部署凭据。
+Node.js 必须为 22 或更高并包含 npm。无需先运行 `corepack enable` 或全局安装 pnpm；缺少 pnpm/Corepack 时，向导会自动准备固定版本。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再以可见文本读取并二次确认管理员初始密码及所需 Token，方便本人部署时核对。确认页和后续日志只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。请勿在共享终端、录屏或直播环境运行；关闭终端后不留下部署凭据。
 
-若旧版本曾显示“找不到可安全执行的 pnpm 或 Corepack JavaScript 入口”，先运行 `git pull --ff-only origin main` 更新部署器，再重新执行向导。该错误发生在连接 Cloudflare 之前，因此不会创建资源，也不会消耗刚输入的 Token；重新运行时需再次输入隐藏凭据。
+若旧版本曾显示“找不到可安全执行的 pnpm 或 Corepack JavaScript 入口”，先运行 `git pull --ff-only origin main` 更新部署器，再重新执行向导。该错误发生在连接 Cloudflare 之前，因此不会创建资源，也不会消耗刚输入的 Token；重新运行时需再次输入凭据。
 
 首次部署通常只需填写：
 
 - `Cloud Mail 访问域名`：例如 `mail.example.com`，不要带 `https://`；
 - `收件域`：例如 `example.com`；多个域用逗号分隔；
 - `管理员邮箱`：例如 `admin@example.com`，域必须属于收件域；
-- `管理员初始密码`：隐藏输入两次，必须为 12–30 个字符；首次部署会自动建号；
+- `管理员初始密码`：可见输入两次，必须为 12–30 个字符；首次部署会自动建号；
 - `LONGOS 主站邮件网关`：完整填写 `https://主站/_longos/mail-relay`；
 - R2 保持开启；向导会自动使用 `<Worker 名称>-attachments`。首次部署不要填写 D1/KV ID；已有生产资源迁移到本工具时才进入高级选项固定其 ID。
 
@@ -182,7 +182,7 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | 自定义域 1014/1016 或证书超时 | 删除同名冲突 A/AAAA/CNAME，确认 Custom Domain Zone 与 Worker 在同一账户，然后用相同输入重跑 |
 | Email Routing 为 `misconfigured` | 检查根域是否残留其他 MX、是否存在多条 SPF；不要同时让其他邮箱服务和 Cloudflare 接管同一域收信 |
 | 失败后已经出现 D1/KV/Worker | 属于可续跑状态，不要删除资源；用相同名称和已有 ID 重跑，部署器会幂等复用 |
-| 提示管理员初始密码缺失 | 新 D1 中还没有 `ADMIN` 用户；本地运行 `deploy-wizard.mjs` 隐藏输入，或在 `production` Environment 添加 `ADMIN_PASSWORD` 后重跑 |
+| 提示管理员初始密码缺失 | 新 D1 中还没有 `ADMIN` 用户；本地运行 `deploy-wizard.mjs` 可见输入，或在 `production` Environment 添加 `ADMIN_PASSWORD` 后重跑 |
 | 重跑后管理员密码没有变化 | 这是防误锁设计；部署密码只创建缺失账号，不覆盖已有账号。登录后在个人设置中修改密码 |
 | 日志曾出现 INIT_SECRET HTTP 200 | Cloudflare 边缘旧版本短暂传播；以 Secret 清单删除为准。新版只警告并继续，不再把成功撤销误判为部署失败 |
 | Worker 能收信但不能发信 | 检查 LONGOS 令牌、主站网关健康、服务器 TCP 25 和发件域授权 |

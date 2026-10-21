@@ -2,7 +2,7 @@
 
 本文面向第一次部署 Cloud Mail 的用户，覆盖 Cloudflare 账户准备、D1、KV、R2、Worker、自定义域名、Email Routing、GitHub Actions、首次初始化、升级、备份、回滚和常见故障。
 
-第一次部署优先使用仓库内置的 GitHub Actions，无需本地命令。它会调用统一部署器构建前端、校验配置、创建或复用 D1/KV/R2、验证 LONGOS 网关、部署 Worker、写入 Secret，并调用受保护的初始化接口。只想看必须步骤时先阅读[从零部署与网站关联](./QUICK_START.md)。本地脚本和手工 Wrangler 配置只用于开发或排障。
+个人部署优先使用 `node scripts/deploy-wizard.mjs`，密钥只在本次进程中存在；需要 GitHub 审批、集中审计和多人运维时使用仓库内置的 GitHub Actions。两者调用同一个部署器，都会构建前端、校验配置、创建或复用 D1/KV/R2、验证 LONGOS 网关、部署 Worker、写入 Worker Secret，并调用受保护的初始化接口。只想看必须步骤时先阅读[从零部署与网站关联](./QUICK_START.md)。手工 Wrangler 配置只用于排障。
 
 > Cloudflare Workers 不是完整 SMTP 服务器，也不能直接连接公网 TCP 25。Cloudflare Email Routing 负责把入站邮件交给 Worker；推荐由 LONGOS 内置 Postfix/OpenDKIM 直投站外邮件，不依赖第三方发件商。Cloudflare Email/Resend 只作为独立部署的兼容选项。
 
@@ -63,16 +63,16 @@
 
 | 范围 | 权限 | 级别 | 用途 |
 |---|---|---|---|
-| Account | Workers Scripts | Edit | 发布 Worker |
-| Account | Workers KV Storage | Edit | 查找或创建 KV |
-| Account | D1 | Edit | 查找或创建 D1 |
-| Account | Workers R2 Storage | Edit | 本地 Wrangler 创建或管理 R2 时需要 |
-| Zone | Workers Routes | Edit | 配置 Worker 自定义域名 |
+| Workers 产品范围 | Admin（首次）/ Editor（升级） | Write | 创建或更新 Worker；旧界面对应 Account / Workers Scripts / Edit |
+| Account | Workers KV Storage | Write（旧界面 Edit） | 查找或创建 KV |
+| Account | D1 | Write（旧界面 Edit） | 查找或创建 D1 |
+| Account | Workers R2 Storage | Write（旧界面 Edit） | Wrangler 创建或管理 R2 时需要 |
+| Zone | Workers Routes | Write（旧界面 Edit） | 配置 Worker 自定义域名 |
 | Account | Account Settings | Read | Wrangler 识别账户 |
 | Zone | Zone | Read | 按 `DOMAIN` 识别活动 Zone |
-| Zone | DNS | Edit | 通过 LONGOS 同步 A/AAAA、DKIM、SPF 与 DMARC |
-| Zone | Zone Settings | Edit | 自动启用 Email Routing 及所需 MX/SPF |
-| Zone | Email Routing Rules | Edit | 自动把 Catch-all 指向当前 Worker |
+| Zone | DNS | Write（旧界面 Edit） | 通过 LONGOS 同步 A/AAAA、DKIM、SPF 与 DMARC |
+| Zone | Zone Settings | Write（旧界面 Edit） | 自动启用 Email Routing 及所需 MX/SPF |
+| Zone | Email Routing Rules | Write（旧界面 Edit） | 自动把 Catch-all 指向当前 Worker |
 
 资源范围建议设置为：
 
@@ -81,7 +81,7 @@
 - 不要使用 Global API Key；
 - 不要把 Token 写入仓库文件、Issue、日志或 `wrangler.toml`。
 
-创建后 Cloudflare 只完整显示一次 Token。立即复制，在本次部署时通过 `production` Environment 或安全触发向导提交为 `CLOUDFLARE_API_TOKEN`。部署器会先调用 Cloudflare Token Verify API，只有状态为 `active` 的 API Token 才会继续；Global API Key 即使同时填写 Account ID 也会被拒绝。
+创建后 Cloudflare 只完整显示一次 Token。立即复制，并通过一次性本地向导或受保护的 `production` Environment 提供为 `CLOUDFLARE_API_TOKEN`。部署器会先调用 Cloudflare Token Verify API，只有状态为 `active` 的 API Token 才会继续；Global API Key 即使同时填写 Account ID 也会被拒绝。
 
 官方参考：[Workers GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)、[API Token 模板](https://developers.cloudflare.com/fundamentals/api/reference/template/)、[API 权限列表](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)。
 
@@ -115,7 +115,7 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 
 若直接使用新版独立仓库，可 Fork [GUSHU101/longos-cloud-mail](https://github.com/GUSHU101/longos-cloud-mail)，或把正式 Release 导入自己的私有仓库。生产部署建议始终从 `main` 或明确的 Release Tag 执行，不要从未审查的临时分支部署。
 
-无需在 **Settings → Secrets and variables → Actions → Variables** 创建任何条目。非敏感配置全部由每次部署的 **Run workflow** 表单提供，生产 Secrets 使用受保护的 `production` Environment。
+无需在 **Settings → Secrets and variables → Actions → Variables** 创建任何条目。一次性本地向导在当前终端询问全部配置；GitHub Actions 的非敏感配置由每次部署的 **Run workflow** 表单提供，生产 Secrets 使用受保护的 `production` Environment。
 
 ### 6.1 Run workflow 表单
 
@@ -142,7 +142,7 @@ Cloudflare Workers、D1、KV、R2 和 Workers AI 都有各自的免费额度与�
 
 ### 6.2 Secrets
 
-GitHub 手动工作流没有 Secret 类型的输入字段，不要把密钥伪装成字符串表单字段。可以在本次运行前进入 `Settings → Environments → production` 保存它们；也可以安装 Node.js 22 与 GitHub CLI 后运行 `node scripts/trigger-github-deployment.mjs`，在同一个部署向导里隐藏输入配置和密钥。向导默认只问常用项，已有资源 ID、CORS 与 AI 等位于可选高级分支；它通过 stdin 调用 `gh secret set --env production`，再用 JSON 触发工作流，密钥不进入参数、事件载荷或仓库。
+GitHub 手动工作流没有 Secret 类型的输入字段，不要把密钥伪装成字符串表单字段。真正的部署时一次性输入使用 `node scripts/deploy-wizard.mjs`；它不会写 GitHub Secrets 或本地配置文件。GitHub Actions 部署则必须在 `Settings → Environments → production` 保存密钥。`node scripts/trigger-github-deployment.mjs` 可以隐藏录入并触发工作流，但底层仍是 `gh secret set --env production`，凭据会持久保存在 Environment，直到管理员删除或轮换。
 
 给 `production` 配置默认分支限制和仓库所有者审批，并删除同名 Repository Secrets。工作流还会拒绝非所有者触发、非所有者重跑或非默认分支的生产部署。依赖安装、审计、测试和构建先在独立无密钥步骤完成，只在最后部署步骤注入凭据。公开 fork 和 PR 使用另一个只读验证工作流，不引用任何 Secrets。另在 `main` 分支规则中启用 PR、Code Owners 审核、`Secret-free verification` 必须通过和禁止 force push。
 
@@ -182,7 +182,7 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 
 ### 6.4 三种典型配置
 
-| 场景 | `CF_EMAIL` | `LONGOS_RELAY_URL` | `LONGOS_INTEGRATION_TOKEN` | R2 |
+| 场景 | 表单 `cloudflare_email` | `LONGOS_RELAY_URL` | `LONGOS_INTEGRATION_TOKEN` | R2 |
 |---|---:|---|---|---|
 | 仅收信 | `false` | 留空 | 留空 | 可选 |
 | Cloudflare 出站 | `true` | 留空 | 留空 | 建议 |
@@ -216,7 +216,7 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 5. 填写本次部署表单，至少提供收件域和管理员邮箱；LONGOS 发信再提供网关 URL；
 6. 再次点击绿色 **Run workflow**，打开本次运行并等待所有步骤变绿。
 
-若使用 `node scripts/trigger-github-deployment.mjs`，向导已经完成以上表单与触发操作。
+若使用 `node scripts/trigger-github-deployment.mjs`，向导已经完成以上表单与触发操作。若使用 `node scripts/deploy-wizard.mjs`，部署在本机直接执行，不会产生 GitHub Actions 运行记录。
 
 工作流会依次执行：
 
@@ -224,11 +224,12 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 2. 按锁文件安装 Worker 与 Vue 依赖；
 3. 运行 Worker 测试、生产依赖审计和 Vue 正式构建；独立 Relay 由 CI 单独验证；
 4. 校验域名、管理员、ID、布尔值、HTTPS 中继地址和 Secret；
-5. 创建或复用 D1、KV 和 R2；
-6. 使用系统集成令牌验证 LONGOS 网关、Postfix、OpenDKIM、队列和幂等日志；
+5. 在任何资源变更前验证 API Token、Account ID、收件 Zone、自定义域父 Zone、Email Routing 读取权限和 LONGOS 网关健康；
+6. 创建或复用 D1、KV 和 R2；
 7. 生成临时生产配置：首次自动生成、升级保留 `jwt_secret`，写入一次性 `INIT_SECRET` 及 LONGOS Secret；
 8. 自动撤销配置中已停用的旧 Secret；
-9. 重试 `POST /api/init` 直到自定义域证书就绪，验收公开配置接口，并撤销和复核一次性 `INIT_SECRET`。
+9. 重试 `POST /api/init` 直到自定义域证书就绪，验收公开配置接口，并撤销和复核一次性 `INIT_SECRET`；
+10. 启用 Email Routing、配置 Catch-all、同步 LONGOS DKIM/SPF/DMARC/A/AAAA，等待 DNS 状态收敛后完成最终验收。
 
 正常情况下最后显示 `[完成] Cloud Mail 已部署`。如果任何校验、测试、网关健康检查或初始化失败，本次工作流为失败状态，不应继续配置邮件路由。
 
@@ -275,16 +276,16 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 5. 对返回结果再次验收；状态仍为 `misconfigured` 时明确提示 MX/SPF 冲突，不误报全部成功；
 6. 若配置了 LONGOS 网关，从其受保护端点读取只含公开值的 DNS 清单，再由 GitHub Runner 使用本次 Token 发布发信身份记录；Cloudflare Token 不会发送给 LONGOS。
 
-如果这些域仍由 Google Workspace、Microsoft 365 或其他邮箱服务商接收邮件，请先把 GitHub Variable `AUTO_CONFIGURE_EMAIL_ROUTING` 设为 `false`，避免切换 MX；Cloud Mail 要正式接管收信时再改回 `true` 并重跑。
+如果这些域仍由 Google Workspace、Microsoft 365 或其他邮箱服务商接收邮件，请在本次 **Run workflow** 表单关闭 `auto_configure_email_routing`，或在一次性向导的高级选项中关闭自动路由，避免切换 MX；Cloud Mail 要正式接管收信时再开启并重跑。
 
-日志中的 `✓ example.com → cloud-mail` 表示 Catch-all 已完成；部署器会在 LONGOS 合并 SPF 后再次轮询，只有 Email Routing DNS 状态为 `ready` 时最终验收才为绿色。旧 Token 缺少新权限时不会回滚已发布的 Worker，但工作流会准确失败并列出需补充的域；增加 `Zone:Read`、`DNS:Edit`、`Zone Settings:Edit`、`Email Routing Rules:Edit` 后重跑即可。
+日志中的 `✓ example.com → cloud-mail` 表示 Catch-all 已完成；部署器会在 LONGOS 合并 SPF 后再次轮询，只有 Email Routing DNS 状态为 `ready` 时最终验收才为绿色。旧 Token 缺少新权限时不会回滚已发布的 Worker，但流程会准确失败并列出需补充的域；增加 `Zone:Read`、`DNS:Write`、`Zone Settings:Write`、`Email Routing Rules:Write`（旧界面名称为 `Edit`）后重跑即可。
 
 注意：
 
 - 如果域名原来已有 Google Workspace、Microsoft 365、企业邮局等 MX，启用 Email Routing 会改变入站投递路径；迁移前先备份并确认不会中断原邮箱；
 - 自动化只操作 `DOMAIN` 明确列出的 Zone，不扫描或修改账户内其他域；
 - 多域名会逐个启用 Email Routing 并指向同一 Worker，单域失败不隐藏其他域的结果；
-- Email Routing 的入站处理与 `CF_EMAIL` 出站 binding 是两件独立的事；
+- Email Routing 的入站处理与表单 `cloudflare_email` 对应的出站 binding 是两件独立的事；
 - DNS 生效后，从外部真实邮箱发送测试邮件，不能只靠站内自发自收验证。
 
 官方参考：[Email Routing API 与 Catch-all](https://developers.cloudflare.com/api/resources/email_routing/)、[Email Routing DNS](https://developers.cloudflare.com/api/resources/email_routing/subresources/dns/)。
@@ -297,7 +298,7 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 4. 检查允许注册、允许收信、角色可用域名、发件次数等限制；
 5. 创建一个测试邮箱账户；
 6. LONGOS 一体化部署会自动锁定“LONGOS 内置邮件服务器”，不允许静默回退第三方；
-7. 使用 LONGOS 时确认中继 URL 与 GitHub Variable 一致；
+7. 使用 LONGOS 时确认中继 URL 与本次部署输入一致；
 8. 不要把 `JWT_SECRET` 或 `LONGOS_INTEGRATION_TOKEN` 填入网页设置。
 
 管理员身份由 `ADMIN` 环境变量中的地址判定。更改 `ADMIN` 后，只有新地址会拥有平台管理员旁路权限；因此变更前先确保新地址已注册并能登录。
@@ -319,7 +320,13 @@ curl -fsS https://mail.example.com/api/setting/websiteConfig
 
 ## 13. 本地一键部署与 Wrangler 手动排障
 
-正式本地部署不需要执行本节后面的零散命令。请在仓库根目录使用：
+正式本地部署不需要创建配置文件，优先在仓库根目录使用一次性安全向导：
+
+```powershell
+node scripts/deploy-wizard.mjs
+```
+
+它隐藏读取 Token，并只通过子进程环境运行统一部署器。以下配置文件方式适合自动化或排障；真实文件会被 Git 忽略，但仍会在磁盘保存明文凭据：
 
 ```bash
 cp .cloud-mail.deploy.env.example .cloud-mail.deploy.env
@@ -552,7 +559,7 @@ GitHub Actions 会自动生成并写入 `INIT_SECRET`；直接重跑部署即可
 
 收信和发信是两条链路：
 
-- Cloudflare 引擎：确认 `CF_EMAIL=true` 且账户已取得出站能力；
+- Cloudflare 引擎：确认部署表单 `cloudflare_email=true` 且账户已取得出站能力；
 - Resend：确认 API Token 与发件域验证；
 - LONGOS：确认带 Bearer 令牌的健康地址返回 200、`LONGOS_RELAY_URL` 正确、系统集成令牌有效、服务器出站 TCP 25/PTR/SPF/DKIM/DMARC 正常；
 - 确认发件时选中的邮箱属于当前用户且域在角色允许列表中。
@@ -565,8 +572,8 @@ GitHub Actions 会自动生成并写入 `INIT_SECRET`；直接重跑部署即可
 
 - [ ] 域名在正确 Cloudflare 账户中且状态 Active
 - [ ] API Token 仅授权目标账户与 Zone
-- [ ] 普通配置只在部署表单，密钥只在 `production` Environment
-- [ ] `DOMAIN` 是 JSON 数组，`ADMIN` 使用其中一个域
+- [ ] 一次性部署的密钥只在本地向导进程；GitHub 部署的密钥只在受保护的 `production` Environment
+- [ ] `mail_domains`/`DOMAIN` 至少包含一个有效域名，`ADMIN` 使用其中一个域
 - [ ] D1 名称与 ID 匹配，KV ID 指向生产 Namespace
 - [ ] 需要附件时已填写 R2 Bucket 名称，且账户已开通 R2（Bucket 由部署器复用或创建）
 - [ ] Cloudflare Git Builds 已禁用

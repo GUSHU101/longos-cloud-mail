@@ -73,10 +73,12 @@ pnpm(['--dir', 'mail-vue', 'run', 'build']);
 run(process.execPath, [
   '--test',
   'scripts/cloudflare-auth.test.mjs',
+  'scripts/cloudflare-preflight.test.mjs',
   'scripts/deploy-input-security.test.mjs',
   'scripts/email-routing.test.mjs',
   'scripts/frontend-security.test.mjs',
   'scripts/github-deployment.test.mjs',
+  'scripts/local-deployment.test.mjs',
   'scripts/longos-dns-sync.test.mjs',
   'scripts/deploy-validation.test.mjs',
   'scripts/workflow-security.test.mjs',

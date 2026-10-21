@@ -22,10 +22,19 @@ Cloudflare Worker 不能直接连接公网 TCP 25，因此不能替代 SMTP 邮�
 
 不需要手工创建 D1、KV、R2、JWT 密钥或 GitHub Actions Variables。
 
-1. 先在 LONGOS 主站后台创建一枚“Cloud Mail”系统集成令牌；
-2. 在 `Actions → Deploy cloud-mail to Cloudflare Workers → Run workflow` 中填写本次部署的全部非敏感配置；
-3. Cloudflare 与 LONGOS 密钥可在运行前保存到受保护的 `production` Environment，或运行 `node scripts/trigger-github-deployment.mjs` 在部署时隐藏输入并立即触发工作流；
-4. 使用推荐 Token 权限时，工作流会自动启用 Email Routing、把 Catch-all 指向 Worker，并读取 LONGOS 的公开 DNS 清单后直接发布发信 DKIM/DMARC、合并 SPF 与校准 DNS-only 邮件主机；Token 永远不会发送给 LONGOS，也无需保存到 Coolify。
+只想在部署时输入密钥、部署后不在 GitHub 或仓库中保存它们，推荐在可信电脑运行：
+
+```powershell
+git clone https://github.com/GUSHU101/longos-cloud-mail.git
+Set-Location longos-cloud-mail
+node scripts/deploy-wizard.mjs
+```
+
+向导会隐藏读取 Cloudflare 与 LONGOS 密钥，显示不含密钥的部署计划，随后完成依赖验证、D1/KV/R2、Worker、初始化、Email Routing、Catch-all 与发信 DNS 验收。密钥只进入本次子进程环境，不写 `.env`、GitHub、命令行参数或日志。
+
+需要团队审批、审计记录和集中发布时，再使用 `Actions → Deploy cloud-mail to Cloudflare Workers`。GitHub 手动工作流没有密文输入控件，所以该方式必须把密钥保存到受保护的 `production` Environment；`node scripts/trigger-github-deployment.mjs` 只是隐藏录入并触发工作流，不能把 GitHub Environment 变成一次性密钥存储。
+
+两种方式都会自动启用 Email Routing、把 Catch-all 指向 Worker，并读取 LONGOS 的公开 DNS 清单后直接发布 DKIM/DMARC、合并 SPF 与校准 DNS-only 邮件主机；Cloudflare Token 永远不会发送给 LONGOS，也无需保存到 Coolify。
 
 完整的逐项页面路径、API Token 权限、变量表、Cloudflare Email Routing、网站关联和验收方法都集中在：
 
@@ -74,9 +83,15 @@ LONGOS 的下单、订单状态、账户、售后和弃单召回邮件直接走�
 
 `mail-relay/` 是独立使用本仓库时的高级兼容组件。与 LONGOS 配套时不要单独部署它：LONGOS 的 Coolify Compose 已经包含受主站鉴权保护的邮件中继、Postfix 与 OpenDKIM。
 
-## 本地开发（可选）
+## 本地部署与排障
 
-正式部署建议使用 GitHub Actions。只有开发或排障时才需要本地命令：
+一次性安全部署直接运行：
+
+```bash
+node scripts/deploy-wizard.mjs
+```
+
+只有非交互自动化或排障才需要明文配置文件：
 
 ```bash
 cp .cloud-mail.deploy.env.example .cloud-mail.deploy.env
@@ -87,7 +102,7 @@ node scripts/deploy-cloudflare.mjs
 ## 安全与交付要求
 
 - 不要把 `CLOUDFLARE_API_TOKEN`、`LONGOS_INTEGRATION_TOKEN` 或 JWT 密钥写入仓库；
-- GitHub 手动工作流没有密文输入类型，因此密钥绝不作为 `workflow_dispatch` 文本字段；安全触发脚本通过标准输入把它们写入受保护的 `production` Environment，普通变量才进入部署表单；
+- GitHub 手动工作流没有密文输入类型，因此密钥绝不作为 `workflow_dispatch` 文本字段；一次性向导只使用当前进程，GitHub 触发脚本则通过标准输入把密钥写入受保护的 `production` Environment；
 - 安装、审计、测试和构建全部在无密钥步骤完成，生产凭据只注入最终部署步骤；
 - Fork/PR 只运行只读无密钥验证；部署仅允许仓库所有者从默认分支手动运行，他人也不能重跑所有者的历史部署；
 - 只使用状态为 active 的 Cloudflare API Token，并仅授权目标账户和 Zone；Global API Key 不受支持，即使同时填写 Account ID 也不会放行；

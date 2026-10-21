@@ -54,6 +54,14 @@ test('validates required credentials without adding them to workflow dispatch da
   assert.equal(JSON.stringify(validInputs).includes(validSecrets.cloudflareApiToken), false);
   assert.equal(JSON.stringify(validInputs).includes(validSecrets.longosIntegrationToken), false);
 });
+
+test('rejects R2 bucket names that Cloudflare cannot create', () => {
+  const invalidInputs = {...validInputs, r2_bucket_name: 'cloud.mail.attachments'};
+  assert.throws(
+    () => validateWizardConfiguration(invalidInputs, validSecrets),
+    /R2 桶名/,
+  );
+});
 test('sends environment secrets over stdin and dispatches variables as JSON', () => {
   assert.match(source, /'secret', 'set', name,[\s\S]*'--env', PRODUCTION_ENVIRONMENT/);
   assert.match(source, /\], \{input: value, capture: true\}\);/);

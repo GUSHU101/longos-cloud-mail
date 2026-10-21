@@ -27,6 +27,14 @@ test('fails final acceptance for real inbound or outbound DNS errors', () => {
   assert.match(source, /发信 SPF 合并后仍未就绪/);
 });
 
+test('preflights zones and the LONGOS gateway before creating Cloudflare storage', () => {
+  const zonePreflight = source.indexOf('preflightCloudflareZones({');
+  const relayPreflight = source.indexOf("[预检] 验证 LONGOS 主站邮件网关");
+  const d1Mutation = source.indexOf("wrangler(['d1', 'create'");
+  assert.ok(zonePreflight > 0 && relayPreflight > zonePreflight);
+  assert.ok(d1Mutation > relayPreflight);
+});
+
 test('keeps production credentials out of dependency, test, audit and build subprocesses', () => {
   assert.match(source, /const verificationEnv = \{\.\.\.process\.env, CI: 'true'\}/);
   for (const secret of [

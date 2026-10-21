@@ -70,8 +70,8 @@ export function validateWizardConfiguration(inputs, secrets) {
   if (inputs.kv_namespace_id && !/^[a-f0-9]{32}$/i.test(inputs.kv_namespace_id)) {
     throw new Error('KV Namespace ID 必须是 32 位十六进制 ID。');
   }
-  if (inputs.r2_bucket_name && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(inputs.r2_bucket_name)) {
-    throw new Error('R2 桶名格式不正确。');
+  if (inputs.r2_bucket_name && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(inputs.r2_bucket_name)) {
+    throw new Error('R2 桶名只能包含小写字母、数字和连字符，长度为 3–63。');
   }
   if (inputs.project_link && !/^https:\/\/[A-Za-z0-9./?_=:%#-]+$/.test(inputs.project_link)) {
     throw new Error('项目链接必须是安全的 HTTPS URL。');

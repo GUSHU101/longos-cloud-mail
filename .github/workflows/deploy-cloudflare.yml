@@ -9,7 +9,7 @@ on:
         default: "cloud-mail"
         type: string
       custom_domain:
-        description: "Cloud Mail 访问域名，例如 mail.example.com"
+        description: "网页/API 域名，例如 mail.example.com（不要带 https://；不能有冲突 DNS）"
         required: false
         type: string
       mail_domains:
@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       longos_relay_url:
-        description: "LONGOS 主站邮件网关，例如 https://shop.example.com/_longos/mail-relay"
+        description: "LONGOS 主站网关完整地址：https://shop.example.com/_longos/mail-relay"
         required: false
         type: string
       cloudflare_account_id:
@@ -41,7 +41,7 @@ on:
         required: false
         type: string
       r2_bucket_name:
-        description: "R2 桶名（留空关闭附件对象存储）"
+        description: "R2 桶名（3–63 位小写字母/数字/连字符；留空关闭附件存储）"
         required: false
         type: string
       project_link:
@@ -148,3 +148,23 @@ jobs:
           CORS_ORIGINS: ${{ inputs.cors_origins }}
           AUTO_CONFIGURE_EMAIL_ROUTING: ${{ inputs.auto_configure_email_routing && 'true' || 'false' }}
         run: node scripts/deploy-cloudflare.mjs --from-env --skip-verification
+
+      - name: 📋 部署结果摘要 / Deployment summary
+        if: always()
+        shell: bash
+        env:
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+        run: |
+          {
+            echo "## LONGOS Cloud Mail deployment"
+            echo
+            if [[ "$DEPLOY_OUTCOME" == "success" ]]; then
+              echo "✅ Worker、数据库初始化、临时密钥撤销、收信路由和发信 DNS 验收已通过。"
+              [[ -n "$WORKER_URL" ]] && echo "- 地址：[$WORKER_URL]($WORKER_URL)"
+            else
+              echo "❌ 部署或最终验收未通过。展开上方 **Validate and deploy**，从第一条 \`[失败]\` 开始处理；不要只看最后的退出码。"
+              echo "- 修复权限、域名、网关或 DNS 后，用相同资源名称/ID 重跑；部署器会复用已有 D1、KV 和 R2。"
+              echo "- 教程：[从零部署与网站关联](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/doc/QUICK_START.md)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

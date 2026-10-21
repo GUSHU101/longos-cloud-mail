@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { verifyCloudflareApiToken } from './cloudflare-auth.mjs';
+import { preflightCloudflareZones } from './cloudflare-preflight.mjs';
 import { configureEmailRouting } from './email-routing.mjs';
 import { syncLongosOutboundDns } from './longos-dns-sync.mjs';
 import { resolvePnpmCommand } from './pnpm-command.mjs';
@@ -244,7 +245,9 @@ if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+$/.test(config.ADMIN)
   fail('ADMIN 必须是有效邮箱，并使用 DOMAIN 中的域名。');
 }
 if (config.CUSTOM_DOMAIN) config.CUSTOM_DOMAIN = normalizeDomain(config.CUSTOM_DOMAIN, 'CUSTOM_DOMAIN');
-if (config.R2_BUCKET_NAME && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(config.R2_BUCKET_NAME)) fail('R2_BUCKET_NAME 格式不正确。');
+if (config.R2_BUCKET_NAME && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(config.R2_BUCKET_NAME)) {
+  fail('R2_BUCKET_NAME 只能包含小写字母、数字和连字符，长度为 3–63，且不能以连字符开头或结尾。');
+}
 if (config.PROJECT_LINK && !/^https:\/\/[A-Za-z0-9./?_=:%#-]+$/.test(config.PROJECT_LINK)) fail('PROJECT_LINK 必须是安全的 HTTPS URL。');
 if (config.AI_MODEL && !/^[@A-Za-z0-9._/-]+$/.test(config.AI_MODEL)) fail('AI_MODEL 含有不允许的字符。');
 for (const field of ['CLOUDFLARE_EMAIL', 'ANALYSIS_CACHE', 'AUTO_CONFIGURE_EMAIL_ROUTING']) {
@@ -291,6 +294,35 @@ console.log(`[配置] Cloudflare API Token：${verifiedCloudflareToken.status}�
 config.CLOUDFLARE_ACCOUNT_ID = await resolveCloudflareAccountId(config);
 if (!/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('自动识别到的 CLOUDFLARE_ACCOUNT_ID 格式不正确。');
 console.log(`[配置] Cloudflare Account ID：${config.CLOUDFLARE_ACCOUNT_ID}`);
+
+console.log('\n[预检] 验证 Cloudflare Zone、自定义域和 Email Routing 访问范围');
+let zonePreflight;
+try {
+  zonePreflight = await preflightCloudflareZones({
+    token: config.CLOUDFLARE_API_TOKEN,
+    accountId: config.CLOUDFLARE_ACCOUNT_ID,
+    customDomain: config.CUSTOM_DOMAIN,
+    mailDomains: domains,
+    autoConfigureEmailRouting: config.AUTO_CONFIGURE_EMAIL_ROUTING.toLowerCase() === 'true',
+  });
+} catch (error) {
+  fail(`Cloudflare 预检失败：${error.message}`);
+}
+if (zonePreflight.customZone) console.log(`✓ 自定义域 ${config.CUSTOM_DOMAIN} 位于活动 Zone ${zonePreflight.customZone.name}`);
+for (const item of zonePreflight.routing) {
+  console.log(`✓ 收件 Zone ${item.domain} 可访问${item.enabled ? '，Email Routing 已启用' : '；尚未启用 Email Routing，将在部署后自动启用'}`);
+}
+
+console.log('\n[预检] 验证 LONGOS 主站邮件网关');
+if (config.LONGOS_RELAY_URL) {
+  const health = await fetchJson(`${config.LONGOS_RELAY_URL.replace(/\/$/, '')}/health`, {
+    headers: { accept: 'application/json', authorization: `Bearer ${config.LONGOS_INTEGRATION_TOKEN}` },
+  });
+  if (!health.response.ok || health.body.status !== 'ok') fail(`LONGOS 邮件网关不可用（HTTP ${health.response.status}）：${health.body.message || health.text}`);
+  console.log(`✓ LONGOS 邮件网关正常，Postfix 队列：${health.body.queueDepth ?? '未报告'}。`);
+} else {
+  console.log('未配置 LONGOS 邮件网关；Cloud Mail 默认仅收信。只有管理员明确配置兼容引擎后才会站外发信。');
+}
 
 const verificationEnv = {...process.env, CI: 'true'};
 for (const secretName of [
@@ -361,18 +393,7 @@ if (config.R2_BUCKET_NAME) {
   console.log('未配置 R2_BUCKET_NAME，附件对象存储绑定将被关闭。');
 }
 
-console.log('\n[5/8] 验证 LONGOS 主站邮件网关');
-if (config.LONGOS_RELAY_URL) {
-  const health = await fetchJson(`${config.LONGOS_RELAY_URL.replace(/\/$/, '')}/health`, {
-    headers: { accept: 'application/json', authorization: `Bearer ${config.LONGOS_INTEGRATION_TOKEN}` },
-  });
-  if (!health.response.ok || health.body.status !== 'ok') fail(`LONGOS 邮件网关不可用（HTTP ${health.response.status}）：${health.body.message || health.text}`);
-  console.log(`LONGOS 邮件网关正常，Postfix 队列：${health.body.queueDepth ?? '未报告'}。`);
-} else {
-  console.log('未配置 LONGOS 邮件网关；Cloud Mail 默认仅收信。只有管理员明确配置兼容引擎后才会站外发信。');
-}
-
-console.log('\n[6/8] 生成生产配置，原子写入 Secret 并部署 Worker');
+console.log('\n[5/8] 生成生产配置，原子写入 Secret 并部署 Worker');
 let wranglerConfig = readFileSync(join(workerRoot, 'wrangler-action.toml'), 'utf8');
 if (!config.CUSTOM_DOMAIN) wranglerConfig = removeTomlBlock(wranglerConfig, '[[routes]]');
 if (!config.R2_BUCKET_NAME) wranglerConfig = removeTomlBlock(wranglerConfig, '[[r2_buckets]]');
@@ -455,7 +476,7 @@ failureCleanup = () => {
 	}
 };
 
-console.log('\n[7/8] 撤销配置中已停用的旧 Worker Secret');
+console.log('\n[6/8] 撤销配置中已停用的旧 Worker Secret');
 const configuredOptionalSecrets = {
   LONGOS_INTEGRATION_TOKEN: config.LONGOS_INTEGRATION_TOKEN,
   RELAY_SHARED_SECRET: config.LONGOS_INTEGRATION_TOKEN ? '' : config.RELAY_SHARED_SECRET,
@@ -466,7 +487,7 @@ for (const [name, value] of Object.entries(configuredOptionalSecrets)) {
   wrangler(['secret', 'delete', name, '-c', generatedConfig], { env: deploymentEnv, input: 'y\n' });
 }
 
-console.log('\n[8/8] 初始化/升级数据库并验收');
+console.log('\n[7/8] 初始化/升级数据库并验收');
 let initialized = false;
 for (let attempt = 1; attempt <= 12; attempt += 1) {
   try {
@@ -549,8 +570,8 @@ if (!publicCheck.ok) fail(`撤销一次性密钥后公开配置验收失败（HT
 
 const autoConfigureInbound = config.AUTO_CONFIGURE_EMAIL_ROUTING.toLowerCase() === 'true';
 console.log(autoConfigureInbound
-  ? '\n[收信自动配置] 启用 Email Routing 并将 Catch-all 指向当前 Worker'
-  : '\n[收信自动配置] 已通过 AUTO_CONFIGURE_EMAIL_ROUTING=false 主动跳过');
+  ? '\n[8/8 收信自动配置] 启用 Email Routing 并将 Catch-all 指向当前 Worker'
+  : '\n[8/8 收信自动配置] 已通过 AUTO_CONFIGURE_EMAIL_ROUTING=false 主动跳过');
 let inboundRouting = autoConfigureInbound
   ? await configureEmailRouting({
     token: config.CLOUDFLARE_API_TOKEN,
@@ -624,7 +645,7 @@ if (!autoConfigureInbound) {
 } else {
   if (inboundRouting.manual.length > 0) {
     console.log(`仅以下域需要在 Cloudflare Email Routing 手工补充 Catch-all：${inboundRouting.manual.map(item => item.domain).join('、')}`);
-    console.log('给 API Token 增加 Zone:Read、Zone Settings:Edit 和 Email Routing Rules:Edit 后重跑，可自动完成。');
+    console.log('给 API Token 增加 Zone:Read、Zone Settings:Write 和 Email Routing Rules:Write（旧界面名称为 Edit）后重跑，可自动完成。');
   }
   if (inboundRouting.warnings.length > 0) {
     console.log(`以下域的收信规则已就绪，但 Email Routing DNS 状态仍异常：${inboundRouting.warnings.map(item => item.domain).join('、')}。请先修复 MX/SPF 冲突。`);

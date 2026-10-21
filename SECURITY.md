@@ -2,7 +2,7 @@
 
 ## Production credential boundary
 
-LONGOS Cloud Mail supports only a least-privilege Cloudflare API Token. Global API Keys are rejected. Store production credentials in the protected GitHub `production` Environment, never in repository variables, workflow inputs, files, issues, screenshots, or logs. The optional deployment wizard sends secret values to `gh secret set` through standard input and dispatches only non-secret JSON fields.
+LONGOS Cloud Mail supports only a least-privilege Cloudflare API Token. Global API Keys are rejected. For one-time deployment, `node scripts/deploy-wizard.mjs` keeps credentials only in the current process and passes them to the deployer through its child environment; it does not write a configuration file, GitHub secret, command-line argument, or log. For GitHub Actions deployment, store production credentials in the protected GitHub `production` Environment, never in repository variables, workflow inputs, files, issues, screenshots, or logs. `node scripts/trigger-github-deployment.mjs` sends secret values to `gh secret set` through standard input and dispatches only non-secret JSON fields, but those Environment secrets remain stored until an administrator rotates or deletes them.
 
 Forks and pull requests run only `.github/workflows/validate.yml`, which has read-only repository permission and receives no production secrets. Production deployment is manual, default-branch-only, repository-owner-only, re-run-owner-only, and protected by the `production` Environment. Dependency installation, audit, tests, and builds finish before the deployment step receives secrets.
 

@@ -64,3 +64,9 @@ test('cannot bypass verification outside GitHub Actions', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /skip-verification/);
 });
+
+test('rejects R2 names that the Cloudflare API cannot create', () => {
+  const result = validate({R2_BUCKET_NAME: 'attachments.example.com'});
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /R2_BUCKET_NAME/);
+});

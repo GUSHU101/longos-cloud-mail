@@ -173,7 +173,7 @@ gh run watch --exit-status
 npx wrangler versions upload
 ```
 
-该命令只创建预览版本，日志中出现 `Version Preview URL` 不等于已替换生产流量。一体化部署请使用上述 GitHub Actions 入口；它会生成带 D1、KV、R2、自定义域和 LONGOS 中继配置的 `wrangler-action.toml`，然后执行真正的 `wrangler deploy`。
+该命令只创建预览版本，日志中出现 `Version Preview URL` 不等于已替换生产流量。一体化部署请使用一次性安全向导或上述 GitHub Actions 入口；两者都会生成带 D1、KV、R2、自定义域和 LONGOS 中继配置的临时 Wrangler 配置，然后执行真正的 `wrangler deploy`。
 
 部署后立即验证：
 

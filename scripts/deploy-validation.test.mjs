@@ -18,7 +18,9 @@ test('treats the Cloudflare secret inventory as the authoritative revocation che
 test('creates or reuses managed resources and waits for control-plane visibility', () => {
   assert.match(source, /waitForCloudflareResource\(\{list: listD1/);
   assert.match(source, /waitForCloudflareResource\(\{list: listKv/);
-  assert.match(source, /R2 .*创建后未能通过读取验收/);
+  assert.match(source, /inspectCloudflareR2Bucket\(\{/);
+  assert.match(source, /waitForCloudflareR2Bucket\(\{/);
+  assert.doesNotMatch(source, /r2', 'bucket', 'info'/);
   assert.match(source, /workerState = existingWorkerInventory\.exists \? 'updated' : 'created'/);
 });
 test('uses a side-effect-free runtime probe and accepts only unauthorized as propagated', () => {
@@ -80,7 +82,9 @@ test('keeps production credentials out of dependency, test, audit and build subp
   assert.match(verifier, /'mail-vue', 'audit', '--prod', '--audit-level', 'moderate', '--json'/);
   assert.match(verifier, /'audit', '--omit=dev', '--audit-level', 'moderate', '--json'/);
   assert.match(verifier, /npm\(\['test'\], \{cwd: relayRoot\}/);
-  assert.match(verifier, /scripts\/workflow-security\.test\.mjs/);
+  assert.match(verifier, /readdirSync\(resolve\(repositoryRoot, 'scripts'\)/);
+  assert.match(verifier, /entry\.name\.endsWith\('\.test\.mjs'\)/);
+  assert.match(verifier, /\['--test', \.\.\.deploymentTests\]/);
 });
 
 test('removes complete deployment configuration and unrelated credentials from verification', () => {

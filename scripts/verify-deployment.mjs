@@ -1,4 +1,5 @@
 import {spawnSync} from 'node:child_process';
+import {readdirSync} from 'node:fs';
 import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolveNpmCommand, resolvePnpmCommand} from './pnpm-command.mjs';
@@ -111,22 +112,14 @@ console.log('[验证] 执行 Worker 测试、部署安全测试与前端生产�
 pnpm(['--dir', 'mail-worker', 'run', 'test:unit']);
 npm(['test'], {cwd: relayRoot});
 pnpm(['--dir', 'mail-vue', 'run', 'build']);
-run(process.execPath, [
-  '--test',
-  'scripts/cloudflare-account-preflight.test.mjs',
-  'scripts/cloudflare-auth.test.mjs',
-  'scripts/cloudflare-preflight.test.mjs',
-  'scripts/cloudflare-resource-state.test.mjs',
-  'scripts/deploy-input-security.test.mjs',
-  'scripts/dependency-audit.test.mjs',
-  'scripts/email-routing.test.mjs',
-  'scripts/frontend-security.test.mjs',
-  'scripts/github-deployment.test.mjs',
-  'scripts/local-deployment.test.mjs',
-  'scripts/longos-dns-sync.test.mjs',
-  'scripts/pnpm-command.test.mjs',
-  'scripts/deploy-validation.test.mjs',
-  'scripts/workflow-security.test.mjs',
-]);
+const deploymentTests = readdirSync(resolve(repositoryRoot, 'scripts'), {withFileTypes: true})
+  .filter(entry => entry.isFile() && entry.name.endsWith('.test.mjs'))
+  .map(entry => `scripts/${entry.name}`)
+  .sort();
+if (deploymentTests.length === 0) {
+  console.error('[验证失败] scripts 目录中没有找到部署安全测试。');
+  process.exit(1);
+}
+run(process.execPath, ['--test', ...deploymentTests]);
 
 console.log('[验证通过] Worker、前端、中继、依赖、构建和部署安全策略均通过。');

@@ -20,6 +20,10 @@ import {
   selectCloudflareResource,
   waitForCloudflareResource,
 } from './cloudflare-resource-state.mjs';
+import {
+  inspectCloudflareR2Bucket,
+  waitForCloudflareR2Bucket,
+} from './cloudflare-r2-state.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
@@ -466,22 +470,28 @@ console.log(`✓ KV ${kvState === 'created' ? '已创建' : '已复用'}：${con
 console.log('\n[4/8] 创建或复用 Cloudflare R2');
 let r2State = 'disabled';
 if (config.R2_BUCKET_NAME) {
-  const info = wrangler(['r2', 'bucket', 'info', config.R2_BUCKET_NAME], { env: deploymentEnv, capture: true, allowFailure: true });
-  if (info.status !== 0) {
+  const inspectR2 = () => inspectCloudflareR2Bucket({
+    token: config.CLOUDFLARE_API_TOKEN,
+    accountId: config.CLOUDFLARE_ACCOUNT_ID,
+    bucketName: config.R2_BUCKET_NAME,
+  });
+  let r2Inspection;
+  try {
+    r2Inspection = await inspectR2();
+  } catch (error) {
+    fail(error.message);
+  }
+  if (!r2Inspection.exists) {
     wrangler(['r2', 'bucket', 'create', config.R2_BUCKET_NAME], { env: deploymentEnv });
     r2State = 'created';
-    let visible = false;
-    for (let attempt = 1; attempt <= 8; attempt += 1) {
-      const check = wrangler(['r2', 'bucket', 'info', config.R2_BUCKET_NAME], {
-        env: deploymentEnv, capture: true, allowFailure: true,
+    try {
+      await waitForCloudflareR2Bucket({
+        inspect: inspectR2,
+        bucketName: config.R2_BUCKET_NAME,
       });
-      if (check.status === 0) {
-        visible = true;
-        break;
-      }
-      if (attempt < 8) await new Promise(resolveDelay => setTimeout(resolveDelay, 2_500));
+    } catch (error) {
+      fail(error.message);
     }
-    if (!visible) fail(`R2 ${config.R2_BUCKET_NAME} 创建后未能通过读取验收；请确认 R2 已开通后重跑。`);
   } else {
     r2State = 'reused';
   }

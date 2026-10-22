@@ -68,7 +68,7 @@ function runDeployment(environment) {
     windowsHide: true,
   });
   if (result.error) throw new Error(`无法启动部署器：${result.error.message}`);
-  if (result.status !== 0) throw new Error(`部署器退出码 ${result.status}。请按上方第一条明确错误修复后重跑；已创建的同名资源会安全复用。`);
+  return result.status ?? 1;
 }
 
 async function main() {
@@ -152,7 +152,16 @@ async function main() {
   console.log(`- Email Routing 自动配置：${inputs.auto_configure_email_routing ? '开启' : '关闭'}`);
   if (!await confirm('确认开始验证并部署', true)) throw new Error('已取消部署。');
 
-  runDeployment(deploymentEnvironment(inputs, secrets));
+  const environment = deploymentEnvironment(inputs, secrets);
+  while (true) {
+    const status = runDeployment(environment);
+    if (status === 0) break;
+    console.error(`\n[部署未完成] 部署器退出码 ${status}。上方第一条“失败”信息是根因；已创建的同名资源会安全复用。`);
+    if (!await confirm('保留本次全部输入并立即重试', false)) {
+      throw new Error('部署未完成。修复上方错误后可重新运行向导。');
+    }
+    console.log('\n[重试] 使用内存中的同一配置与密钥重新验证并部署；不会要求再次输入。');
+  }
   console.log('\n✓ 部署与验收完成。密钥未持久化；关闭本终端后当前进程环境即消失。');
 }
 

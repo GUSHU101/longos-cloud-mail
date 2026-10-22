@@ -43,4 +43,6 @@ test('does not persist or place credentials in command arguments', () => {
   assert.match(source, /question\('管理员初始密码/);
   assert.doesNotMatch(source, /hiddenQuestion|setRawMode|emitKeypressEvents/);
   assert.match(source, /如需复制或分享部署日志/);
+  assert.match(source, /保留本次全部输入并立即重试/);
+  assert.match(source, /不会要求再次输入/);
 });

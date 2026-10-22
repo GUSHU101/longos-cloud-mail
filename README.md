@@ -30,7 +30,7 @@ Set-Location longos-cloud-mail
 node scripts/deploy-wizard.mjs
 ```
 
-向导会以可见文本读取并确认管理员初始密码、Cloudflare 与 LONGOS 密钥，方便部署者直接核对；部署计划和后续日志仍不显示密钥。随后会完成依赖验证、D1/KV/R2、Worker、管理员建号、Email Routing、Catch-all 与发信 DNS 验收。密码和 Token 只进入本次子进程环境，不写 `.env`、GitHub、命令行参数、Worker Secret 或日志；重复部署不会重置已有管理员密码。请只在本人可见且不录屏、不共享的终端中运行。
+向导会以可见文本读取并确认管理员初始密码、Cloudflare 与 LONGOS 密钥，方便部署者直接核对；部署计划和后续日志仍不显示密钥。随后会完成依赖验证、D1/KV/R2、Worker、管理员建号、Email Routing、Catch-all 与发信 DNS 验收。密码和 Token 只进入本次子进程环境，不写 `.env`、GitHub、命令行参数、Worker Secret 或日志；重复部署不会重置已有管理员密码。若网络等临时故障导致退出，向导可保留内存中的全部输入立即重试，无需再次填写。请只在本人可见且不录屏、不共享的终端中运行。
 
 需要团队审批、审计记录和集中发布时，再使用 `Actions → Deploy cloud-mail to Cloudflare Workers`。GitHub 手动工作流没有密文输入控件，所以该方式必须把密钥保存到受保护的 `production` Environment；`node scripts/trigger-github-deployment.mjs` 只是隐藏录入并触发工作流，不能把 GitHub Environment 变成一次性密钥存储。
 
@@ -45,7 +45,7 @@ node scripts/deploy-wizard.mjs
 - 识别单一 Cloudflare Account；
 - 为 `DOMAIN` 中的每个域自动启用 Email Routing，并幂等配置 Catch-all 到当前 Worker；
 - 在 LONGOS 已配置时读取其公开 DNS 清单，由受保护的部署 Runner 直接完成出站邮件 DNS；Cloudflare Token 不会发送给 LONGOS；
-- 一次性检查 Worker、D1、KV、可选 R2 及 Zone 权限，再创建或复用 D1、KV 和可选 R2；本地向导在准备依赖前检查，GitHub 则在无密钥验证完成后的生产部署步骤检查；
+- 一次性检查 Worker、D1、KV、可选 R2 及全部 Zone 权限，再创建或复用 D1、KV 和可选 R2；多个 Zone 的缺失权限会在一次运行中完整列出；R2 只有在官方精确查询明确返回不存在时才创建，权限、网络或 Cloudflare API 故障不会被误判为缺少资源；本地向导在准备依赖前检查，GitHub 则在无密钥验证完成后的生产部署步骤检查；
 - 首次不填任何资源 ID：按名称自动创建 D1/KV，`R2=auto` 自动创建附件桶；升级安全复用并在摘要中显示实际 ID；
 - 自动生成并在升级时保留 JWT Secret；
 - 首次自动创建管理员与主邮箱，升级时保留已有密码；

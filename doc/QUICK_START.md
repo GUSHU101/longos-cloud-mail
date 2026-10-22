@@ -182,6 +182,7 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | 首次创建 Worker 被拒绝 | 新权限模型首次创建需要 Workers 产品范围 Admin；Worker 建成后可把 Token 降为 Editor |
 | R2 创建失败 | 先在 Cloudflare R2 页面接受条款/开通结算；桶名只能含小写字母、数字、连字符且为 3–63 位；不用附件可关闭 R2 |
 | D1/KV 创建后暂时查不到 | 新版会自动等待控制面同步；若等待后仍失败，不要删除已创建资源，直接用相同名称重跑 |
+| `security/advisories/bulk`、`TimeoutError` 或 `operation was aborted` | npm 安全公告服务网络超时，不是依赖安装失败。新版在本地确认没有收到漏洞报告后会明确警告并继续；GitHub Actions 始终严格失败，网络恢复后应以 CI 审计结果为准 |
 | 预检找不到活动 Zone | 域名尚未 Active、位于另一个账户，或 Token 没有 Zone:Read/未包含该 Zone |
 | 自定义域 1014/1016 或证书超时 | 删除同名冲突 A/AAAA/CNAME，确认 Custom Domain Zone 与 Worker 在同一账户，然后用相同输入重跑 |
 | Email Routing 为 `misconfigured` | 检查根域是否残留其他 MX、是否存在多条 SPF；不要同时让其他邮箱服务和 Cloudflare 接管同一域收信 |

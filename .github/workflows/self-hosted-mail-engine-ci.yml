@@ -114,6 +114,6 @@ jobs:
           cache-dependency-path: mail-relay/package-lock.json
       - name: Test relay security
         working-directory: mail-relay
-        run: npm ci && npm audit --omit=dev --audit-level=moderate && npm test
+        run: npm ci --no-audit --no-fund && npm audit --omit=dev --audit-level=moderate && npm test
       - name: Build relay image
         run: docker build --tag cloud-mail-relay:ci ./mail-relay

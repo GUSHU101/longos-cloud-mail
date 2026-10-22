@@ -2,6 +2,7 @@ import {spawnSync} from 'node:child_process';
 import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolveNpmCommand, resolvePnpmCommand} from './pnpm-command.mjs';
+import {classifyAuditResult, conciseAuditFailure} from './dependency-audit.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const relayRoot = resolve(repositoryRoot, 'mail-relay');
@@ -54,15 +55,57 @@ function npm(args, options = {}) {
   run(npmCommand, [...npmPrefix, ...args], options);
 }
 
+const strictDependencyAudit = process.env.GITHUB_ACTIONS === 'true'
+  || process.env.LONGOS_STRICT_DEPENDENCY_AUDIT === 'true';
+
+function audit(command, args, {label, cwd = repositoryRoot}) {
+  console.log(`[审计] ${label}`);
+  const result = spawnSync(command, args, {
+    cwd,
+    env: process.env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
+  });
+  const category = classifyAuditResult(result);
+  if (category === 'passed') {
+    console.log(`✓ ${label} 未发现中危、高危或严重生产依赖漏洞。`);
+    return;
+  }
+  if (category === 'transient-network' && !strictDependencyAudit) {
+    console.warn(`[审计警告] ${label} 无法连接 npm 安全公告服务：${conciseAuditFailure(result)}`);
+    console.warn('本地部署继续执行；这不是“审计通过”。GitHub Actions 仍会强制完成审计，真实漏洞和未知错误仍会阻止部署。');
+    return;
+  }
+  if (result.stdout) console.error(result.stdout.trim());
+  if (result.stderr) console.error(result.stderr.trim());
+  if (result.error) console.error(result.error.message);
+  const reason = category === 'vulnerabilities'
+    ? '发现达到 moderate 阈值的生产依赖漏洞'
+    : category === 'transient-network'
+      ? 'CI 中安全公告服务不可用'
+      : '审计返回未知错误';
+  console.error(`[验证失败] ${label}：${reason}（退出码 ${result.status ?? '未知'}）。`);
+  process.exit(result.status || 1);
+}
+
 console.log('[验证] 安装锁定依赖（仅允许 pnpm-workspace.yaml 明确批准的构建脚本）');
 pnpm(['--dir', 'mail-worker', 'install', '--frozen-lockfile']);
 pnpm(['--dir', 'mail-vue', 'install', '--frozen-lockfile']);
-npm(['ci'], {cwd: relayRoot});
+npm(['ci', '--no-audit', '--no-fund'], {cwd: relayRoot});
 
 console.log('[验证] 审计生产依赖');
-pnpm(['--dir', 'mail-worker', 'audit', '--prod', '--audit-level', 'moderate']);
-pnpm(['--dir', 'mail-vue', 'audit', '--prod', '--audit-level', 'moderate']);
-npm(['audit', '--omit=dev', '--audit-level', 'moderate'], {cwd: relayRoot});
+audit(pnpmCommand, [...pnpmPrefix, '--dir', 'mail-worker', 'audit', '--prod', '--audit-level', 'moderate', '--json'], {
+  label: 'Worker',
+});
+audit(pnpmCommand, [...pnpmPrefix, '--dir', 'mail-vue', 'audit', '--prod', '--audit-level', 'moderate', '--json'], {
+  label: '前端',
+});
+audit(npmCommand, [...npmPrefix, 'audit', '--omit=dev', '--audit-level', 'moderate', '--json'], {
+  label: 'LONGOS 邮件中继',
+  cwd: relayRoot,
+});
 
 console.log('[验证] 执行 Worker 测试、部署安全测试与前端生产构建');
 pnpm(['--dir', 'mail-worker', 'run', 'test:unit']);
@@ -75,6 +118,7 @@ run(process.execPath, [
   'scripts/cloudflare-preflight.test.mjs',
   'scripts/cloudflare-resource-state.test.mjs',
   'scripts/deploy-input-security.test.mjs',
+  'scripts/dependency-audit.test.mjs',
   'scripts/email-routing.test.mjs',
   'scripts/frontend-security.test.mjs',
   'scripts/github-deployment.test.mjs',

@@ -73,8 +73,12 @@ test('keeps production credentials out of dependency, test, audit and build subp
   assert.match(source, /deploy-cloudflare\\\.yml@/);
   assert.match(verifier, /mail-worker', 'install', '--frozen-lockfile/);
   assert.match(verifier, /mail-vue', 'run', 'build'/);
-  assert.match(verifier, /npm\(\['ci'\], \{cwd: relayRoot\}/);
-  assert.match(verifier, /npm\(\['audit', '--omit=dev', '--audit-level', 'moderate'\], \{cwd: relayRoot\}/);
+  assert.match(verifier, /npm\(\['ci', '--no-audit', '--no-fund'\], \{cwd: relayRoot\}/);
+  assert.match(verifier, /strictDependencyAudit = process\.env\.GITHUB_ACTIONS === 'true'/);
+  assert.match(verifier, /category === 'transient-network' && !strictDependencyAudit/);
+  assert.match(verifier, /'mail-worker', 'audit', '--prod', '--audit-level', 'moderate', '--json'/);
+  assert.match(verifier, /'mail-vue', 'audit', '--prod', '--audit-level', 'moderate', '--json'/);
+  assert.match(verifier, /'audit', '--omit=dev', '--audit-level', 'moderate', '--json'/);
   assert.match(verifier, /npm\(\['test'\], \{cwd: relayRoot\}/);
   assert.match(verifier, /scripts\/workflow-security\.test\.mjs/);
 });

@@ -17,7 +17,7 @@
 - LONGOS 已通过 GitHub + Coolify Raw Docker Compose 正常运行；
 - 主站 HTTPS 可访问；
 - LONGOS 的 `mail-relay`、Postfix 和 OpenDKIM 容器健康；
-- LONGOS 已填写邮件主机、发件域与服务器公网 IP；PTR/rDNS 已在服务器供应商处设置（其余发信 DNS 由工作流自动完成）；
+- LONGOS 已配置邮件主机和发件域；`MAIL_RELAY_IPS` 默认留空由服务器多源一致性自动识别，只有独立 SMTP 出口、特殊 NAT/策略路由或多 IP 才手工覆盖；PTR/rDNS 已在服务器供应商处设置（其余发信 DNS 由工作流自动完成）；
 - 收件域使用 Cloudflare 权威 DNS；
 - Cloudflare 中目标 Zone 状态为 `Active`，`CUSTOM_DOMAIN` 没有冲突的 A、AAAA 或 CNAME；
 - 首次使用 Workers 时已在 `Workers & Pages` 打开过一次产品页面；首次使用 R2 时已接受条款/开通结算，或者部署时关闭 R2；
@@ -144,7 +144,7 @@ Email Routing 与 Catch-all 已自动配置
 
 旧 Token 缺少权限时，已经发布的 Worker 不会回滚，但最终验收会保持红色并列出需要补充的域名和权限。给 Token 增加 `Zone:Read`、`DNS:Write`、`Zone Settings:Write`、`Email Routing Rules:Write`（旧界面名称为 `Edit`）后重跑即可自动补齐；也可以仅对日志列出的域，在 Cloudflare 的 `Email → Email Routing → Routing rules` 手工把 Catch-all 指向本次 Worker。
 
-Email Routing 的 MX 用于**收信**，LONGOS 的 DKIM/DMARC/PTR 用于 Postfix **发信**。根域 SPF 必须只有一条；部署工作流会先配置收信再调用 LONGOS，保留 Cloudflare 的 `include:_spf.mx.cloudflare.net` 和其他发信来源，加入 `mailout` 后自动合并。只有 PTR/rDNS 与出站 TCP 25 仍必须在服务器供应商处处理。
+Email Routing 的 MX 用于**收信**，LONGOS 的 DKIM/DMARC/PTR 用于 Postfix **发信**。根域 SPF 必须只有一条；部署工作流会先配置收信再调用 LONGOS，保留 Cloudflare 的 `include:_spf.mx.cloudflare.net` 和其他发信来源，加入 `mailout` 后自动合并。LONGOS 会在空 `MAIL_RELAY_IPS` 时要求至少两个独立 HTTPS 回显源对公网出口 IP 达成一致，不会从 Cloudflare 代理后的网站 DNS 猜测。只有 PTR/rDNS 与出站 TCP 25 仍必须在服务器供应商处处理。
 
 ## 8. 首次登录与发信测试
 

@@ -59,7 +59,7 @@ LONGOS 正式环境只使用 GitHub + Coolify Raw Docker Compose + Coolify 集�
 2. 从 `GUSHU101/LONGOS` 创建 Git-based Docker Compose 应用；
 3. Compose 路径填写 `/docker-compose.yml`，启用 Raw Compose，并连接 external `coolify` 网络；
 4. 至少设置 `DOMAIN`、`SAAS_BASE_DOMAIN` 和 `ADMIN_EMAIL`；
-5. 建议同时设置 `MAIL_RELAY_HOSTNAME`、`MAIL_RELAY_DOMAINS`、`MAIL_RELAY_ALLOWED_SENDER_DOMAINS` 和 `MAIL_RELAY_PLATFORM_SENDER_DOMAIN`；
+5. 建议同时设置 `MAIL_RELAY_HOSTNAME`、`MAIL_RELAY_DOMAINS`、`MAIL_RELAY_ALLOWED_SENDER_DOMAINS` 和 `MAIL_RELAY_PLATFORM_SENDER_DOMAIN`；`MAIL_RELAY_IPS` 默认留空自动识别，只有独立 SMTP 出口、特殊 NAT/策略路由或多公网 IP 才填写；
 6. 点击 Deploy。首次安装、数据库、队列、调度器、Postfix/OpenDKIM、Caddy 路由和后续升级都自动完成。
 
 Coolify 自动生成并持久保存 APP_KEY、数据库密码、管理员初始密码、边缘鉴权密钥和两个内部邮件 HMAC 密钥。不要手工填写或复制任何 `SERVICE_*` 值，也不要把内部 `MAIL_RELAY_SHARED_SECRET` / `CLOUD_MAIL_RELAY_SHARED_SECRET` 放入 GitHub、Cloudflare、网页或 D1。
@@ -72,7 +72,7 @@ Coolify 自动生成并持久保存 APP_KEY、数据库密码、管理员初始�
 
 ## 4. 配置 DNS、PTR、SPF、DKIM 和 DMARC
 
-假设服务器公网 IPv4 是 `203.0.113.10`：
+假设服务器公网 IPv4 是 `203.0.113.10`，以下是最终应得到的公开记录：
 
 ```text
 mailout.example.com       A     203.0.113.10                         # DNS Only
@@ -87,6 +87,10 @@ _dmarc.example.com        TXT   "v=DMARC1; p=none; rua=mailto:dmarc@example.com"
 ```
 
 正向 A 记录和反向 PTR 必须互相匹配。`mailout.example.com` 不可开启 Cloudflare 橙云代理，因为 Cloudflare 普通代理不转发 SMTP。
+
+新版 LONGOS 无需为普通一体化部署手工填写 `MAIL_RELAY_IPS`。空值会在服务器容器内请求 3 个独立 HTTPS 回显源，至少 2 个返回同一公网 IP 才把它加入 Cloud Mail 读取的 DNS 清单。探测失败或不一致时会停止 A/AAAA 修改并要求手工覆盖，不会把 Docker 私网或 Cloudflare Anycast 地址写入邮件 DNS。
+
+自动识别不能修改 IP 所有者控制的 PTR/rDNS；仍必须在服务器供应商控制台把该 IP 反向指向 `MAIL_RELAY_HOSTNAME`。
 
 在 LONGOS 主站后台“邮件设置/诊断”复制实际生成的 DKIM TXT，并逐条发布到 DNS。初次上线建议先使用 `p=none` 观察 DMARC 报告；确认 SPF、DKIM 对齐和正常投递后，再逐步改为 `quarantine` 或 `reject`。
 

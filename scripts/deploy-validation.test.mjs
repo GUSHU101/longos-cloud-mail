@@ -31,6 +31,10 @@ test('retires the temporary initialization secret on failures and process termin
   assert.match(source, /process\.once\('SIGINT'/);
   assert.match(source, /process\.once\('SIGTERM'/);
   assert.match(source, /process\.once\('exit',[\s\S]*runFailureCleanup\(\)/);
+  const deployed = source.indexOf('if (deployment.status !== 0)');
+  const cleanupRegistered = source.indexOf('failureCleanup = () =>', deployed);
+  const workerUrlRequired = source.indexOf("if (!workerUrl) fail", deployed);
+  assert.ok(deployed > 0 && cleanupRegistered > deployed && cleanupRegistered < workerUrlRequired);
 });
 test('fails final acceptance for real inbound or outbound DNS errors', () => {
   assert.match(source, /LONGOS 发信 DNS 验收未通过/);
@@ -81,6 +85,10 @@ test('removes complete deployment configuration and unrelated credentials from v
     ADMIN_PASSWORD: 'admin-password',
     NPM_TOKEN: 'registry-token',
     HTTP_AUTHORIZATION: 'Bearer private',
+    AWS_ACCESS_KEY_ID: 'access-key',
+    SSH_PRIVATE_KEY: 'private-key',
+    SIGNING_KEY: 'signing-key',
+    longos_relay_url: 'https://lowercase.example.com/_longos/mail-relay',
   });
 
   assert.equal(clean.PATH, 'system-path');
@@ -91,6 +99,10 @@ test('removes complete deployment configuration and unrelated credentials from v
   assert.equal(clean.ADMIN_PASSWORD, undefined);
   assert.equal(clean.NPM_TOKEN, undefined);
   assert.equal(clean.HTTP_AUTHORIZATION, undefined);
+  assert.equal(clean.AWS_ACCESS_KEY_ID, undefined);
+  assert.equal(clean.SSH_PRIVATE_KEY, undefined);
+  assert.equal(clean.SIGNING_KEY, undefined);
+  assert.equal(clean.longos_relay_url, undefined);
 });
 
 test('bootstraps the administrator without persisting its password as a Worker secret', () => {

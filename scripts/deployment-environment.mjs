@@ -24,13 +24,22 @@ export const DEPLOYMENT_ENVIRONMENT_KEYS = Object.freeze([
 ]);
 
 const SENSITIVE_ENVIRONMENT_NAME =
-  /(?:token|secret|password|credential|authorization|api[_-]?key)/i;
+  /(?:token|secret|password|passwd|credential|authorization|api[_-]?key|access[_-]?key|private[_-]?key|encryption[_-]?key|signing[_-]?key|cookie|(?:^|_)(?:pat|jwt)(?:_|$))/i;
+
+const DEPLOYMENT_ENVIRONMENT_KEY_SET = new Set(
+  DEPLOYMENT_ENVIRONMENT_KEYS.map(name => name.toUpperCase()),
+);
+
+export function isSensitiveEnvironmentName(name) {
+  return SENSITIVE_ENVIRONMENT_NAME.test(String(name || ''));
+}
 
 export function sanitizedVerificationEnvironment(environment = process.env) {
   const clean = {...environment, CI: 'true'};
-  for (const deploymentKey of DEPLOYMENT_ENVIRONMENT_KEYS) delete clean[deploymentKey];
   for (const name of Object.keys(clean)) {
-    if (SENSITIVE_ENVIRONMENT_NAME.test(name)) delete clean[name];
+    if (DEPLOYMENT_ENVIRONMENT_KEY_SET.has(name.toUpperCase()) || isSensitiveEnvironmentName(name)) {
+      delete clean[name];
+    }
   }
   return clean;
 }

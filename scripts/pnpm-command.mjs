@@ -8,12 +8,10 @@ import {
 import {tmpdir} from 'node:os';
 import {basename, dirname, join, resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {isSensitiveEnvironmentName} from './deployment-environment.mjs';
 
 export const PINNED_PNPM_VERSION = '11.25.0';
 export const NPM_REGISTRY = 'https://registry.npmjs.org/';
-
-const SENSITIVE_ENVIRONMENT_NAME =
-  /(?:token|secret|password|credential|authorization|api[_-]?key)/i;
 
 function locateWindowsWrappers(commandName) {
   const located = spawnSync('where.exe', [commandName], {
@@ -64,7 +62,7 @@ function npmEntrypoint() {
 export function sanitizedBootstrapEnvironment(environment = process.env) {
   const clean = {};
   for (const [name, value] of Object.entries(environment)) {
-    if (SENSITIVE_ENVIRONMENT_NAME.test(name)) continue;
+    if (isSensitiveEnvironmentName(name)) continue;
     if (/^npm_config_userconfig$/i.test(name)) continue;
     clean[name] = value;
   }
@@ -73,6 +71,21 @@ export function sanitizedBootstrapEnvironment(environment = process.env) {
   clean.npm_config_audit = 'false';
   clean.npm_config_fund = 'false';
   return clean;
+}
+
+export function resolveNpmCommand() {
+  if (process.platform === 'win32') {
+    const entrypoint = npmEntrypoint();
+    if (!entrypoint) {
+      throw new Error('找不到与当前 Node.js 配套的 npm CLI；请重新安装包含 npm 的 Node.js 22 或更高版本。');
+    }
+    return {command: process.execPath, prefix: [entrypoint], entrypoint};
+  }
+
+  if (spawnSync('npm', ['--version'], {windowsHide: true}).status === 0) {
+    return {command: 'npm', prefix: [], entrypoint: ''};
+  }
+  throw new Error('找不到 npm；请安装包含 npm 的 Node.js 22 或更高版本。');
 }
 
 export function isPinnedPnpmEntrypoint(entrypoint) {

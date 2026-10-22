@@ -9,6 +9,7 @@ import {
   PINNED_PNPM_VERSION,
   bootstrapArguments,
   isPinnedPnpmEntrypoint,
+  resolveNpmCommand,
   sanitizedBootstrapEnvironment,
 } from './pnpm-command.mjs';
 
@@ -39,6 +40,8 @@ test('pnpm bootstrap does not expose deployment credentials to npm', () => {
     HTTP_AUTHORIZATION: 'Bearer hidden',
     NPM_TOKEN: 'npm-token',
     NPM_CONFIG_USERCONFIG: 'C:\\private\\.npmrc',
+    AWS_ACCESS_KEY_ID: 'access-key',
+    SSH_PRIVATE_KEY: 'private-key',
   });
 
   assert.equal(environment.PATH, 'C:\\Windows');
@@ -49,8 +52,20 @@ test('pnpm bootstrap does not expose deployment credentials to npm', () => {
   assert.equal(environment.HTTP_AUTHORIZATION, undefined);
   assert.equal(environment.NPM_TOKEN, undefined);
   assert.equal(environment.NPM_CONFIG_USERCONFIG, undefined);
+  assert.equal(environment.AWS_ACCESS_KEY_ID, undefined);
+  assert.equal(environment.SSH_PRIVATE_KEY, undefined);
   assert.equal(environment.npm_config_registry, NPM_REGISTRY);
   assert.equal(environment.npm_config_ignore_scripts, 'true');
+});
+
+test('resolves the npm CLI without shell execution', () => {
+  const command = resolveNpmCommand();
+  assert.ok(command.command);
+  assert.ok(Array.isArray(command.prefix));
+  if (process.platform === 'win32') {
+    assert.equal(command.command, process.execPath);
+    assert.match(command.entrypoint, /npm-cli\.js$/i);
+  }
 });
 
 test('only the pinned pnpm package entrypoint is accepted', () => {

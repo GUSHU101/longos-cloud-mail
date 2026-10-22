@@ -12,6 +12,7 @@
 
 ### Operations
 
+- Hardened deployment self-checks with strict CLI/config parsing, duplicate-key rejection, a truly offline dependency-free `--validate-only` path, shared Windows npm discovery, broader credential stripping, Node.js version enforcement in the standalone verifier, and earlier post-deploy registration of one-time-secret cleanup.
 - Fixed local deployment verification inheriting a LONGOS relay URL after its matching token had been intentionally removed. Verification now receives neither deployment configuration nor credentials, tests remain hermetic in credential-bearing shells, and only the final Cloudflare mutation environment regains the required account ID and API token.
 - Made local-wizard credential entry visible for owner-operated deployments while retaining password confirmation and keeping credentials out of files, GitHub, command arguments, deployment summaries, and subsequent logs.
 - Removed the local wizard's hard dependency on pnpm/Corepack: Node.js installations with npm now bootstrap the CI-pinned pnpm version in an isolated temporary directory, disable package install scripts, strip deployment credentials from the npm environment, validate the downloaded entrypoint, reuse it during verification, and delete it on exit.

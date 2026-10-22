@@ -71,7 +71,9 @@ node --version
 node scripts/deploy-wizard.mjs
 ```
 
-Node.js 必须为 22 或更高并包含 npm。无需先运行 `corepack enable` 或全局安装 pnpm；缺少 pnpm/Corepack 时，向导会自动准备固定版本。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再以可见文本读取并二次确认管理员初始密码及所需 Token，方便本人部署时核对。确认页和后续日志只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。请勿在共享终端、录屏或直播环境运行；关闭终端后不留下部署凭据。
+Node.js 必须为 22 或更高并包含 npm。无需先运行 `corepack enable` 或全局安装 pnpm；缺少 pnpm/Corepack 时，向导会自动准备固定版本。向导会依次询问 Worker 名称、访问域、收件域、管理员邮箱、LONGOS 网关、R2 和高级资源 ID，再以可见文本读取并二次确认管理员初始密码及所需 Token，方便本人部署时核对。确认页和后续日志只显示非敏感计划；执行时密码和 Token 只通过子进程环境传给统一部署器，不写入 `.cloud-mail.deploy.env`、GitHub、命令行参数、Worker Secret 或日志。请勿在共享终端、录屏或直播环境运行；如果需要复制日志排障，先删除三项凭据的输入行；关闭终端后不留下部署凭据。
+
+只想检查已有配置文件格式时可运行 `node scripts/deploy-cloudflare.mjs .cloud-mail.deploy.env --validate-only`。此模式不会联网、不会安装 pnpm/依赖，也不会读取或修改 Cloudflare；未知命令参数、未知配置字段和重复字段都会立即报错，避免拼写错误被静默忽略。
 
 若旧版本曾显示“找不到可安全执行的 pnpm 或 Corepack JavaScript 入口”，先运行 `git pull --ff-only origin main` 更新部署器，再重新执行向导。该错误发生在连接 Cloudflare 之前，因此不会创建资源，也不会消耗刚输入的 Token；重新运行时需再次输入凭据。
 

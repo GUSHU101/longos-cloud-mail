@@ -74,6 +74,7 @@ function runDeployment(environment) {
 async function main() {
   console.log('LONGOS Cloud Mail 一次性安全部署向导');
   console.log('Token 与管理员密码会在本终端回显，便于核对；不会写入仓库或 GitHub，只传给本次部署子进程。\n');
+  console.log('注意：如需复制或分享部署日志，请先删除管理员密码、Cloudflare Token 和 LONGOS 令牌所在的输入行。\n');
 
   const workerName = await question('Worker 名称', 'cloud-mail', true);
   const customDomain = await question('Cloud Mail 访问域名（建议填写；不含 https://）');

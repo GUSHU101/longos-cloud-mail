@@ -23,27 +23,39 @@ import {
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
 const cliArgs = process.argv.slice(2);
+const supportedFlags = new Set(['--from-env', '--validate-only', '--skip-verification', '--help']);
+const unknownFlags = cliArgs.filter(argument => argument.startsWith('--') && !supportedFlags.has(argument));
+const positionalArguments = cliArgs.filter(argument => !argument.startsWith('--'));
+if (unknownFlags.length > 0 || positionalArguments.length > 1) {
+  console.error(`[失败] 未知或重复的部署参数：${[...unknownFlags, ...positionalArguments.slice(1)].join(' ')}。使用 --help 查看用法。`);
+  process.exit(1);
+}
+if (cliArgs.includes('--help')) {
+  console.log([
+    '用法：node scripts/deploy-cloudflare.mjs [配置文件] [选项]',
+    '',
+    '选项：',
+    '  --from-env           从当前环境变量读取配置（不能同时指定配置文件）',
+    '  --validate-only      只校验输入，不联网、不安装依赖、不修改 Cloudflare',
+    '  --skip-verification  仅供受信任的 GitHub 部署工作流使用',
+    '  --help               显示本帮助',
+  ].join('\n'));
+  process.exit(0);
+}
 const validateOnly = cliArgs.includes('--validate-only');
 const fromEnvironment = cliArgs.includes('--from-env');
 const skipVerification = cliArgs.includes('--skip-verification');
-const configArgument = cliArgs.find(argument => !argument.startsWith('--')) || '.cloud-mail.deploy.env';
+if (fromEnvironment && positionalArguments.length > 0) {
+  console.error('[失败] --from-env 不能与配置文件路径同时使用。使用 --help 查看用法。');
+  process.exit(1);
+}
+const configArgument = positionalArguments[0] || '.cloud-mail.deploy.env';
 const configPath = resolve(repositoryRoot, configArgument);
 const generatedConfig = join(workerRoot, 'wrangler.generated.toml');
 let pnpmCommand;
 let pnpmPrefix;
 let pnpmEntrypoint = '';
 let pnpmCleanup = () => {};
-try {
-  ({
-    command: pnpmCommand,
-    prefix: pnpmPrefix,
-    entrypoint: pnpmEntrypoint = '',
-    cleanup: pnpmCleanup = () => {},
-  } = resolvePnpmCommand());
-} catch (error) {
-  console.error(`[失败] ${error.message}`);
-  process.exit(1);
-}
 let failureCleanup = null;
 
 function runFailureCleanup() {
@@ -93,6 +105,7 @@ function parseEnvFile(path) {
     const separator = line.indexOf('=');
     if (separator < 1) fail(`配置文件第 ${index + 1} 行不是 KEY=VALUE 格式。`);
     const key = line.slice(0, separator).trim();
+    if (Object.hasOwn(values, key)) fail(`配置文件第 ${index + 1} 行重复定义了 ${key}。`);
     let value = line.slice(separator + 1).trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
@@ -226,6 +239,11 @@ async function resolveCloudflareAccountId(config) {
 const config = fromEnvironment
   ? Object.fromEntries(DEPLOYMENT_ENVIRONMENT_KEYS.map(key => [key, process.env[key] || '']))
   : parseEnvFile(configPath);
+const unknownConfigurationKeys = Object.keys(config)
+  .filter(key => !DEPLOYMENT_ENVIRONMENT_KEYS.includes(key));
+if (unknownConfigurationKeys.length > 0) {
+  fail(`配置文件包含未知字段：${unknownConfigurationKeys.join('、')}。请检查拼写。`);
+}
 config.NAME ||= 'cloud-mail';
 config.D1_DATABASE_NAME ||= config.NAME;
 config.AUTO_CONFIGURE_EMAIL_ROUTING ||= 'true';
@@ -296,8 +314,19 @@ if (skipVerification && !trustedGitHubDeployment) {
 
 if (validateOnly) {
   const sourceLabel = fromEnvironment ? '当前环境变量' : `配置文件 ${configPath}`;
-  console.log(`[通过] ${sourceLabel}中的格式、域名、密钥和 LONGOS 网关参数校验通过。`);
+  console.log(`[通过] ${sourceLabel}中的格式、域名、密钥和 LONGOS 网关参数校验通过；未联网、未安装依赖、未修改 Cloudflare。`);
   process.exit(0);
+}
+
+try {
+  ({
+    command: pnpmCommand,
+    prefix: pnpmPrefix,
+    entrypoint: pnpmEntrypoint = '',
+    cleanup: pnpmCleanup = () => {},
+  } = resolvePnpmCommand());
+} catch (error) {
+  fail(error.message);
 }
 
 let verifiedCloudflareToken;
@@ -510,14 +539,10 @@ if (deployment.status !== 0) {
   if (deployment.stderr) console.error(deployment.stderr.trim());
   fail(`Worker 部署失败（退出码 ${deployment.status}）。`);
 }
-process.stdout.write(deployment.stdout);
-const workersDevUrl = deployment.stdout.match(/https:\/\/[^\s]+\.workers\.dev/)?.[0] || '';
-const workerUrl = config.CUSTOM_DOMAIN ? `https://${config.CUSTOM_DOMAIN}` : workersDevUrl;
-if (!workerUrl) fail('无法从 Wrangler 输出确定 Worker URL；请配置 CUSTOM_DOMAIN。');
 
-// From this point onward the deployed Worker contains a temporary, privileged
-// initialization secret. Any later failure must retire it before the process
-// exits so a failed acceptance check never leaves deployment authority online.
+// The successful deployment already contains a temporary, privileged
+// initialization secret. Register cleanup before parsing any CLI output so a
+// changed Wrangler output format cannot leave that authority online.
 failureCleanup = () => {
 	console.error('\n[清理] 部署未完成，正在撤销一次性 INIT_SECRET。');
 	const cleanup = wrangler(['secret', 'delete', 'INIT_SECRET', '-c', generatedConfig], {
@@ -529,6 +554,11 @@ failureCleanup = () => {
 		console.error(`[清理失败] INIT_SECRET 撤销命令退出码 ${cleanup.status}；请立即重跑工作流或在 Cloudflare 删除该 Secret。`);
 	}
 };
+
+process.stdout.write(deployment.stdout);
+const workersDevUrl = deployment.stdout.match(/https:\/\/[^\s]+\.workers\.dev/)?.[0] || '';
+const workerUrl = config.CUSTOM_DOMAIN ? `https://${config.CUSTOM_DOMAIN}` : workersDevUrl;
+if (!workerUrl) fail('无法从 Wrangler 输出确定 Worker URL；请配置 CUSTOM_DOMAIN。');
 
 console.log('\n[6/8] 撤销配置中已停用的旧 Worker Secret');
 const configuredOptionalSecrets = {

@@ -42,4 +42,5 @@ test('does not persist or place credentials in command arguments', () => {
   assert.doesNotMatch(source, /--(?:token|secret|api-key)/i);
   assert.match(source, /question\('管理员初始密码/);
   assert.doesNotMatch(source, /hiddenQuestion|setRawMode|emitKeypressEvents/);
+  assert.match(source, /如需复制或分享部署日志/);
 });

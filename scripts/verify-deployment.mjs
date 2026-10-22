@@ -1,30 +1,22 @@
 import {spawnSync} from 'node:child_process';
-import {existsSync} from 'node:fs';
-import {dirname, join, resolve} from 'node:path';
+import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {resolvePnpmCommand} from './pnpm-command.mjs';
+import {resolveNpmCommand, resolvePnpmCommand} from './pnpm-command.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const relayRoot = resolve(repositoryRoot, 'mail-relay');
-let npmCommand = 'npm';
-let npmPrefix = [];
-if (process.platform === 'win32') {
-  const npmCliCandidates = [
-    process.env.npm_execpath,
-    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ].filter(Boolean);
-  const npmCli = npmCliCandidates.find(candidate => existsSync(candidate));
-  if (!npmCli) {
-    console.error('[验证失败] 找不到与当前 Node.js 配套的 npm CLI。');
-    process.exit(1);
-  }
-  npmCommand = process.execPath;
-  npmPrefix = [npmCli];
+const nodeMajor = Number(process.versions.node.split('.')[0]);
+if (!Number.isInteger(nodeMajor) || nodeMajor < 22) {
+  console.error(`[验证失败] 需要 Node.js 22 或更高版本，当前为 ${process.versions.node}。`);
+  process.exit(1);
 }
+let npmCommand;
+let npmPrefix;
 let pnpmCommand;
 let pnpmPrefix;
 let pnpmCleanup = () => {};
 try {
+  ({command: npmCommand, prefix: npmPrefix} = resolveNpmCommand());
   ({
     command: pnpmCommand,
     prefix: pnpmPrefix,

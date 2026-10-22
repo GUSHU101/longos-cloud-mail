@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {dirname, resolve} from 'node:path';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {sanitizedVerificationEnvironment} from './deployment-environment.mjs';
@@ -27,9 +29,70 @@ function validate(extra) {
 }
 
 test('accepts a valid environment without contacting Cloudflare', () => {
-  const result = validate({});
+  const result = validate({PATH: '', LONGOS_PNPM_ENTRYPOINT: ''});
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /校验通过/);
+  assert.match(result.stdout, /未联网、未安装依赖、未修改 Cloudflare/);
+  assert.doesNotMatch(result.stdout, /未检测到 pnpm|正在临时安装/);
+});
+
+test('rejects unknown or conflicting CLI arguments before doing any work', () => {
+  const unknown = spawnSync(process.execPath, [deployer, '--validate_only'], {
+    cwd: root,
+    env: {PATH: ''},
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /未知或重复的部署参数/);
+  assert.doesNotMatch(unknown.stdout, /正在临时安装/);
+
+  const conflict = spawnSync(process.execPath, [deployer, 'deploy.env', '--from-env'], {
+    cwd: root,
+    env: {PATH: ''},
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stderr, /不能与配置文件路径同时使用/);
+});
+
+test('rejects unknown and duplicate configuration-file keys', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'longos-deploy-config-test-'));
+  const base = [
+    'CLOUDFLARE_API_TOKEN=validation-only-token',
+    'DOMAIN=example.com',
+    'ADMIN=admin@example.com',
+    'ADMIN_PASSWORD=correct horse battery',
+    'NAME=cloud-mail',
+    'CORS_ORIGINS=[]',
+  ];
+
+  try {
+    const unknownPath = join(directory, 'unknown.env');
+    writeFileSync(unknownPath, [...base, 'AUTO_CONFIGURE_EMAIL_ROUTNG=false'].join('\n'));
+    const unknown = spawnSync(process.execPath, [deployer, unknownPath, '--validate-only'], {
+      cwd: root,
+      env: sanitizedVerificationEnvironment(process.env),
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /未知字段.*AUTO_CONFIGURE_EMAIL_ROUTNG/);
+
+    const duplicatePath = join(directory, 'duplicate.env');
+    writeFileSync(duplicatePath, [...base, 'DOMAIN=other.example.com'].join('\n'));
+    const duplicate = spawnSync(process.execPath, [deployer, duplicatePath, '--validate-only'], {
+      cwd: root,
+      env: sanitizedVerificationEnvironment(process.env),
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    assert.equal(duplicate.status, 1);
+    assert.match(duplicate.stderr, /重复定义了 DOMAIN/);
+  } finally {
+    rmSync(directory, {recursive: true, force: true});
+  }
 });
 
 test('rejects shell-like worker names and project URLs as data', () => {

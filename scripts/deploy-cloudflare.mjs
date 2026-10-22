@@ -11,6 +11,10 @@ import { configureEmailRouting } from './email-routing.mjs';
 import { syncLongosOutboundDns } from './longos-dns-sync.mjs';
 import { resolvePnpmCommand } from './pnpm-command.mjs';
 import {
+  DEPLOYMENT_ENVIRONMENT_KEYS,
+  sanitizedVerificationEnvironment,
+} from './deployment-environment.mjs';
+import {
   resolveManagedR2BucketName,
   selectCloudflareResource,
   waitForCloudflareResource,
@@ -219,16 +223,8 @@ async function resolveCloudflareAccountId(config) {
   return body.result[0].id;
 }
 
-const deploymentKeys = [
-  'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'NAME', 'D1_DATABASE_NAME',
-  'D1_DATABASE_ID', 'KV_NAMESPACE_ID', 'R2_BUCKET_NAME', 'CUSTOM_DOMAIN', 'DOMAIN',
-  'ADMIN', 'ADMIN_PASSWORD', 'CORS_ORIGINS', 'JWT_SECRET', 'LONGOS_RELAY_URL', 'LONGOS_INTEGRATION_TOKEN',
-  'RELAY_SHARED_SECRET', 'CLOUDFLARE_EMAIL', 'ANALYSIS_CACHE', 'AI_MODEL', 'PROJECT_LINK',
-  'RESEND_WEBHOOK_SECRET',
-  'AUTO_CONFIGURE_EMAIL_ROUTING',
-];
 const config = fromEnvironment
-  ? Object.fromEntries(deploymentKeys.map(key => [key, process.env[key] || '']))
+  ? Object.fromEntries(DEPLOYMENT_ENVIRONMENT_KEYS.map(key => [key, process.env[key] || '']))
   : parseEnvFile(configPath);
 config.NAME ||= 'cloud-mail';
 config.D1_DATABASE_NAME ||= config.NAME;
@@ -345,17 +341,7 @@ if (config.LONGOS_RELAY_URL) {
   console.log('未配置 LONGOS 邮件网关；Cloud Mail 默认仅收信。只有管理员明确配置兼容引擎后才会站外发信。');
 }
 
-const verificationEnv = {...process.env, CI: 'true'};
-for (const secretName of [
-  'CLOUDFLARE_API_TOKEN',
-  'ADMIN_PASSWORD',
-  'JWT_SECRET',
-  'LONGOS_INTEGRATION_TOKEN',
-  'RELAY_SHARED_SECRET',
-  'RESEND_WEBHOOK_SECRET',
-]) {
-  delete verificationEnv[secretName];
-}
+const verificationEnv = sanitizedVerificationEnvironment(process.env);
 if (pnpmEntrypoint) verificationEnv.LONGOS_PNPM_ENTRYPOINT = pnpmEntrypoint;
 const deploymentEnv = {
   ...verificationEnv,

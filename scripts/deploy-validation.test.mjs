@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
+import {
+  DEPLOYMENT_ENVIRONMENT_KEYS,
+  sanitizedVerificationEnvironment,
+} from './deployment-environment.mjs';
 
 const source = readFileSync(new URL('./deploy-cloudflare.mjs', import.meta.url), 'utf8');
 const verifier = readFileSync(new URL('./verify-deployment.mjs', import.meta.url), 'utf8');
@@ -43,7 +47,7 @@ test('preflights zones and the LONGOS gateway before creating Cloudflare storage
 });
 
 test('keeps production credentials out of dependency, test, audit and build subprocesses', () => {
-  assert.match(source, /const verificationEnv = \{\.\.\.process\.env, CI: 'true'\}/);
+  assert.match(source, /const verificationEnv = sanitizedVerificationEnvironment\(process\.env\)/);
   for (const secret of [
     'CLOUDFLARE_API_TOKEN',
     'ADMIN_PASSWORD',
@@ -52,8 +56,7 @@ test('keeps production credentials out of dependency, test, audit and build subp
     'RELAY_SHARED_SECRET',
     'RESEND_WEBHOOK_SECRET',
   ]) {
-    assert.match(source, new RegExp(`delete verificationEnv\\[secretName\\]`));
-    assert.match(source, new RegExp(`'${secret}'`));
+    assert.ok(DEPLOYMENT_ENVIRONMENT_KEYS.includes(secret));
   }
   assert.match(source, /const deploymentEnv = \{\s*\.\.\.verificationEnv,/);
   assert.doesNotMatch(source, /const deploymentEnv = \{\s*\.\.\.process\.env,/);
@@ -67,6 +70,27 @@ test('keeps production credentials out of dependency, test, audit and build subp
   assert.match(verifier, /npm\(\['audit', '--omit=dev', '--audit-level', 'moderate'\], \{cwd: relayRoot\}/);
   assert.match(verifier, /npm\(\['test'\], \{cwd: relayRoot\}/);
   assert.match(verifier, /scripts\/workflow-security\.test\.mjs/);
+});
+
+test('removes complete deployment configuration and unrelated credentials from verification', () => {
+  const clean = sanitizedVerificationEnvironment({
+    PATH: 'system-path',
+    LONGOS_RELAY_URL: 'https://shop.example.com/_longos/mail-relay',
+    LONGOS_INTEGRATION_TOKEN: 'integration-token',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-token',
+    ADMIN_PASSWORD: 'admin-password',
+    NPM_TOKEN: 'registry-token',
+    HTTP_AUTHORIZATION: 'Bearer private',
+  });
+
+  assert.equal(clean.PATH, 'system-path');
+  assert.equal(clean.CI, 'true');
+  assert.equal(clean.LONGOS_RELAY_URL, undefined);
+  assert.equal(clean.LONGOS_INTEGRATION_TOKEN, undefined);
+  assert.equal(clean.CLOUDFLARE_API_TOKEN, undefined);
+  assert.equal(clean.ADMIN_PASSWORD, undefined);
+  assert.equal(clean.NPM_TOKEN, undefined);
+  assert.equal(clean.HTTP_AUTHORIZATION, undefined);
 });
 
 test('bootstraps the administrator without persisting its password as a Worker secret', () => {

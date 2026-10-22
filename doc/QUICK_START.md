@@ -182,6 +182,7 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | 自定义域 1014/1016 或证书超时 | 删除同名冲突 A/AAAA/CNAME，确认 Custom Domain Zone 与 Worker 在同一账户，然后用相同输入重跑 |
 | Email Routing 为 `misconfigured` | 检查根域是否残留其他 MX、是否存在多条 SPF；不要同时让其他邮箱服务和 Cloudflare 接管同一域收信 |
 | 失败后已经出现 D1/KV/Worker | 属于可续跑状态，不要删除资源；用相同名称和已有 ID 重跑，部署器会幂等复用 |
+| 自检报告 `LONGOS_RELAY_URL 与 LONGOS_INTEGRATION_TOKEN 必须同时填写` | 旧版把 URL 传给无密钥测试、却正确移除了令牌，造成误报；执行 `git pull --ff-only origin main` 后重新运行向导 |
 | 提示管理员初始密码缺失 | 新 D1 中还没有 `ADMIN` 用户；本地运行 `deploy-wizard.mjs` 可见输入，或在 `production` Environment 添加 `ADMIN_PASSWORD` 后重跑 |
 | 重跑后管理员密码没有变化 | 这是防误锁设计；部署密码只创建缺失账号，不覆盖已有账号。登录后在个人设置中修改密码 |
 | 日志曾出现 INIT_SECRET HTTP 200 | Cloudflare 边缘旧版本短暂传播；以 Secret 清单删除为准。新版只警告并继续，不再把成功撤销误判为部署失败 |

@@ -3,11 +3,12 @@ import {spawnSync} from 'node:child_process';
 import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
+import {sanitizedVerificationEnvironment} from './deployment-environment.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const deployer = resolve(root, 'scripts/deploy-cloudflare.mjs');
 const validEnv = {
-  ...process.env,
+  ...sanitizedVerificationEnvironment(process.env),
   CLOUDFLARE_API_TOKEN: 'validation-only-token',
   DOMAIN: 'example.com',
   ADMIN: 'admin@example.com',

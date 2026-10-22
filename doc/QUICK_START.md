@@ -58,6 +58,8 @@
 
 如果 Token 只能访问一个账户，部署器会自动识别 Account ID。只有 Token 可访问多个账户时，才需要在部署表单填写 `cloudflare_account_id`。
 
+Cloudflare 登录角色和 API Token 是两套独立授权。即使当前账号是超级管理员，创建 Token 时漏选 D1、KV、R2 或 Workers 权限，该 Token 仍会被对应 API 拒绝。新版部署器会并行读取 Worker、D1、KV 与可选 R2 API，一次性报告所有不可访问项；本地向导在准备 pnpm、安装依赖和构建前执行，GitHub 则在独立无密钥验证完成后的生产部署步骤开头执行。读取通过只代表资源范围正确，自动创建/更新仍必须使用上表的 Write/Admin 权限。
+
 ## 5. 选择部署入口
 
 ### 方式 A：一次性本地安全向导（推荐个人部署）
@@ -176,7 +178,7 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | Actions 中没有 `Run workflow` | 确认工作流文件已在仓库默认分支、Actions 已启用，并从工作流详情页而非单次运行页操作 |
 | GitHub Job 立即显示 Skipped | 生产工作流只允许仓库所有者、默认分支和手动触发；请由所有者重新运行，不要使用协作者账号或临时分支 |
 | 一直显示 Waiting | `production` Environment 正在等待审批；单人仓库若开启 Prevent self-review 会无人可批准 |
-| `Authentication error [10000]` | Token 无效、过期、账户/Zone 资源范围错误，或误用了 Global API Key；重新创建最小权限 API Token |
+| `Authentication error [10000]` | 看报错前面的资源名：若是 D1/KV/R2/Worker 列表，Token 已激活但漏选了该账户级权限或 Account Resources 选错；若是 Zone API，检查 Zone 权限和 Zone Resources。按第 4 节重新创建 Token，不要只更换 Account ID |
 | 首次创建 Worker 被拒绝 | 新权限模型首次创建需要 Workers 产品范围 Admin；Worker 建成后可把 Token 降为 Editor |
 | R2 创建失败 | 先在 Cloudflare R2 页面接受条款/开通结算；桶名只能含小写字母、数字、连字符且为 3–63 位；不用附件可关闭 R2 |
 | D1/KV 创建后暂时查不到 | 新版会自动等待控制面同步；若等待后仍失败，不要删除已创建资源，直接用相同名称重跑 |

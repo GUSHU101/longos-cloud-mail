@@ -84,6 +84,8 @@
 
 创建后 Cloudflare 只完整显示一次 Token。立即复制，并通过一次性本地向导或受保护的 `production` Environment 提供为 `CLOUDFLARE_API_TOKEN`。部署器会先调用 Cloudflare Token Verify API，只有状态为 `active` 的 API Token 才会继续；Global API Key 即使同时填写 Account ID 也会被拒绝。
 
+Dashboard 登录账号的管理员身份不会自动补齐 API Token 的权限；Token 只拥有创建时选中的权限和资源范围。部署器会并行读取 Worker、D1、KV 与启用时的 R2 账户 API；本地向导在准备 pnpm、安装依赖、测试和构建之前执行，GitHub 则在独立无密钥验证完成后的生产部署步骤开头执行。若多项缺失，会在同一条错误中列出资源名、HTTP 状态、Cloudflare 错误码和应补权限。该只读检查不会创建资源；读取成功也不能代替自动创建/更新所需的 Write 或 Workers Admin 权限。
+
 官方参考：[Workers GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)、[API Token 模板](https://developers.cloudflare.com/fundamentals/api/reference/template/)、[API 权限列表](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)。
 
 ## 5. 准备 D1、KV 和 R2
@@ -228,7 +230,7 @@ Worker 会使用原始请求体及 `svix-id`、`svix-timestamp`、`svix-signatur
 2. 按锁文件安装 Worker 与 Vue 依赖；
 3. 运行 Worker 测试、生产依赖审计和 Vue 正式构建；独立 Relay 由 CI 单独验证；
 4. 校验域名、管理员、ID、布尔值、HTTPS 中继地址和 Secret；
-5. 在任何资源变更前验证 API Token、Account ID、收件 Zone、自定义域父 Zone、Email Routing 读取权限和 LONGOS 网关健康；
+5. 在生产凭据注入后、任何 Cloudflare 资源变更前验证 API Token、Account ID、Worker/D1/KV/R2 账户 API、收件 Zone、自定义域父 Zone、Email Routing 读取权限和 LONGOS 网关健康；本地向导会把这一步提前到准备 pnpm 之前；
 6. 创建或复用 D1、KV 和 R2；
 7. 生成临时生产配置：首次自动生成、升级保留 `jwt_secret`，写入一次性 `INIT_SECRET` 及 LONGOS Secret；
 8. 自动撤销配置中已停用的旧 Secret；

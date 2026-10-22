@@ -42,11 +42,14 @@ test('fails final acceptance for real inbound or outbound DNS errors', () => {
   assert.match(source, /发信 SPF 合并后仍未就绪/);
 });
 
-test('preflights zones and the LONGOS gateway before creating Cloudflare storage', () => {
+test('preflights account resources, zones and the LONGOS gateway before preparing dependencies or creating storage', () => {
+  const accountPreflight = source.indexOf('preflightCloudflareAccountResources({');
   const zonePreflight = source.indexOf('preflightCloudflareZones({');
   const relayPreflight = source.indexOf("[预检] 验证 LONGOS 主站邮件网关");
+  const dependencyPreparation = source.indexOf('resolvePnpmCommand()', accountPreflight);
   const d1Mutation = source.indexOf("wrangler(['d1', 'create'");
-  assert.ok(zonePreflight > 0 && relayPreflight > zonePreflight);
+  assert.ok(accountPreflight > 0 && zonePreflight > accountPreflight && relayPreflight > zonePreflight);
+  assert.ok(dependencyPreparation > relayPreflight);
   assert.ok(d1Mutation > relayPreflight);
 });
 

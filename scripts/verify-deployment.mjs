@@ -70,6 +70,7 @@ npm(['test'], {cwd: relayRoot});
 pnpm(['--dir', 'mail-vue', 'run', 'build']);
 run(process.execPath, [
   '--test',
+  'scripts/cloudflare-account-preflight.test.mjs',
   'scripts/cloudflare-auth.test.mjs',
   'scripts/cloudflare-preflight.test.mjs',
   'scripts/cloudflare-resource-state.test.mjs',

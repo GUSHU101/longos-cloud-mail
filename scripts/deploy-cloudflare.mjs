@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { verifyCloudflareApiToken } from './cloudflare-auth.mjs';
+import { preflightCloudflareAccountResources } from './cloudflare-account-preflight.mjs';
 import { preflightCloudflareZones } from './cloudflare-preflight.mjs';
 import { configureEmailRouting } from './email-routing.mjs';
 import { syncLongosOutboundDns } from './longos-dns-sync.mjs';
@@ -318,17 +319,6 @@ if (validateOnly) {
   process.exit(0);
 }
 
-try {
-  ({
-    command: pnpmCommand,
-    prefix: pnpmPrefix,
-    entrypoint: pnpmEntrypoint = '',
-    cleanup: pnpmCleanup = () => {},
-  } = resolvePnpmCommand());
-} catch (error) {
-  fail(error.message);
-}
-
 let verifiedCloudflareToken;
 try {
   verifiedCloudflareToken = await verifyCloudflareApiToken({token: config.CLOUDFLARE_API_TOKEN});
@@ -340,6 +330,21 @@ console.log(`[配置] Cloudflare API Token：${verifiedCloudflareToken.status}�
 config.CLOUDFLARE_ACCOUNT_ID = await resolveCloudflareAccountId(config);
 if (!/^[a-f0-9]{32}$/i.test(config.CLOUDFLARE_ACCOUNT_ID)) fail('自动识别到的 CLOUDFLARE_ACCOUNT_ID 格式不正确。');
 console.log(`[配置] Cloudflare Account ID：${config.CLOUDFLARE_ACCOUNT_ID}`);
+
+console.log('\n[预检] 验证 Cloudflare Worker、D1、KV 与 R2 账户访问范围');
+let accountPreflight;
+try {
+  accountPreflight = await preflightCloudflareAccountResources({
+    token: config.CLOUDFLARE_API_TOKEN,
+    accountId: config.CLOUDFLARE_ACCOUNT_ID,
+    includeR2: Boolean(config.R2_BUCKET_NAME),
+  });
+} catch (error) {
+  fail(`Cloudflare 账户资源预检失败：${error.message}`);
+}
+for (const item of accountPreflight) {
+  console.log(`✓ ${item.label} 账户 API 可访问；部署写入仍要求 ${item.permission}`);
+}
 
 console.log('\n[预检] 验证 Cloudflare Zone、自定义域和 Email Routing 访问范围');
 let zonePreflight;
@@ -368,6 +373,17 @@ if (config.LONGOS_RELAY_URL) {
   console.log(`✓ LONGOS 邮件网关正常，Postfix 队列：${health.body.queueDepth ?? '未报告'}。`);
 } else {
   console.log('未配置 LONGOS 邮件网关；Cloud Mail 默认仅收信。只有管理员明确配置兼容引擎后才会站外发信。');
+}
+
+try {
+  ({
+    command: pnpmCommand,
+    prefix: pnpmPrefix,
+    entrypoint: pnpmEntrypoint = '',
+    cleanup: pnpmCleanup = () => {},
+  } = resolvePnpmCommand());
+} catch (error) {
+  fail(error.message);
 }
 
 const verificationEnv = sanitizedVerificationEnvironment(process.env);

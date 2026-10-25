@@ -18,7 +18,7 @@
     "compressorjs": "^1.4.0",
     "date-time-format-timezone": "^1.0.22",
     "dayjs": "^1.11.23",
-    "dexie": "^4.4.6",
+    "dexie": "^4.4.7",
     "echarts": "^6.1.0",
     "element-plus": "^2.14.7",
     "lodash-es": "^4.18.1",
@@ -33,7 +33,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
     "less": "^4.9.1",
-    "sass": "^1.105.2",
+    "sass": "^1.106.1",
     "terser": "^5.51.2",
     "unplugin-auto-import": "^21.1.0",
     "unplugin-vue-components": "^32.1.0",

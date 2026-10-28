@@ -18,7 +18,7 @@ LONGOS 下单/召回邮件 ── 内网 HMAC ──────┘
 
 Cloudflare Worker 不能直接连接公网 TCP 25，因此不能替代 SMTP 邮件服务器。Cloudflare 在这里负责 Worker 运行、收件路由和数据存储；真正的站外发件由 LONGOS 服务器内置的 Postfix/OpenDKIM 完成。Cloudflare Email Sending 与 Resend 仅保留为独立部署的可选兼容能力，一体化部署会锁定为 LONGOS 内置引擎，不会静默回退到第三方。
 
-如果网站服务器没有可控 PTR/rDNS 或出站 TCP 25，可让完整 LONGOS 与 Cloud Mail 继续留在主服务器/Cloudflare，只在第二台服务器运行本仓库 `mail-relay/` 子目录的专用邮件出口组件。仓库提供专门的 Coolify Compose，把 mail-relay 与 Cloudflare Tunnel 放在同一资源中，只监听 `127.0.0.1:8788`，不占用 80/443，可与 3X-UI 共存；它不会在第二台服务器安装 Cloud Mail UI、Worker、数据库或 LONGOS。完整步骤见[第二台服务器专用邮件出口节点](./doc/REMOTE_MAIL_NODE.md)。
+如果网站服务器没有可控 PTR/rDNS 或出站 TCP 25，可让完整 LONGOS 与 Cloud Mail 继续留在主服务器/Cloudflare，只在第二台服务器运行本仓库 `mail-relay/` 子目录的专用邮件出口组件。仓库提供专门的 Coolify Compose，把 mail-relay 与 Cloudflare Tunnel 放在同一资源中，只监听 `127.0.0.1:8788`，不占用 80/443，可与 3X-UI 共存；它不会在第二台服务器安装 Cloud Mail UI、Worker、数据库或 LONGOS。HMAC 与 Tunnel Token 使用 Docker Secret 文件，连接器具有真实 readiness 与受控资源边界。完整步骤见[第二台服务器专用邮件出口节点](./doc/REMOTE_MAIL_NODE.md)。
 
 ## 最推荐的部署方式
 

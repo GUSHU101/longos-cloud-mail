@@ -93,10 +93,19 @@ RELAY_HTTP_PORT=8788
 MAIL_NODE_VOLUME_PREFIX=longos-remote-mail
 TUNNEL_PROTOCOL=auto
 TUNNEL_LOG_LEVEL=info
+TUNNEL_METRICS_ADDRESS=127.0.0.1:20246
 CLOUDFLARED_IMAGE=cloudflare/cloudflared:2026.10.5
+RELAY_MEMORY_LIMIT=768m
+RELAY_MEMORY_RESERVATION=256m
+RELAY_PIDS_LIMIT=256
+TUNNEL_MEMORY_LIMIT=256m
+TUNNEL_MEMORY_RESERVATION=64m
+TUNNEL_PIDS_LIMIT=128
 ```
 
 `MAIL_NODE_VOLUME_PREFIX` 首次部署后不要修改，否则 Compose 会创建一套新卷，看起来像 DKIM、队列和幂等记录“丢失”。
+
+默认内存与进程上限针对一台同时运行 3X-UI 的 2 GiB VPS：relay 最多 768 MiB，cloudflared 最多 256 MiB。不要在没有监控的情况下删除这些上限；如果实际大附件并发较高，应先增加服务器内存，再逐步调高 relay 限额。`TUNNEL_METRICS_ADDRESS` 只绑定回环地址，用于 Docker readiness，不应改成 `0.0.0.0`。
 
 以下三项必须在 Normal view 单独添加，启用 Secret，并关闭 Build Variable：
 
@@ -107,6 +116,8 @@ CLOUDFLARED_IMAGE=cloudflare/cloudflared:2026.10.5
 | `TUNNEL_TOKEN` | Cloudflare Tunnel 的 `eyJ...` Token |
 
 两条 HMAC 密钥必须不同、各不少于 32 个字符。不要重新生成一组只存在于第二台服务器的密钥，否则主站签名无法通过。不要把这些值粘贴到 Git、截图、聊天、Dockerfile或 Build Argument。
+
+Compose 会把三个值转换为只读 Docker Secret 文件：relay 通过 `*_FILE` 读取两条 HMAC 密钥，cloudflared 通过官方 `TUNNEL_TOKEN_FILE` 读取 Tunnel Token。因此密钥正文不会出现在容器的配置环境列表或进程命令行中。Coolify里仍须启用 Secret，并关闭 Build Variable，避免密钥进入镜像构建阶段。
 
 若需要团队级复用，可以在 LONGOS 项目创建两个 Secret Shared Variables，再让主站和远端资源引用它们；已有生产站不要在未核对值的情况下直接替换主站自动生成的 `SERVICE_PASSWORD_*`。
 
@@ -125,7 +136,7 @@ curl -fsS http://127.0.0.1:8788/health
 
 - relay 为 healthy；
 - `127.0.0.1:8788->3000/tcp`，不能是 `0.0.0.0:8788`；
-- cloudflared 日志出现已注册的 tunnel connection；
+- cloudflared 为 healthy，日志出现已注册的 tunnel connection；
 - 3X-UI 仍然拥有原来的 80/443。
 
 然后从任意外部网络验证：
@@ -134,7 +145,7 @@ curl -fsS http://127.0.0.1:8788/health
 curl -fsS https://relay-api.example.com/health
 ```
 
-如果本机健康而公网返回 502，检查 Tunnel Route 是否精确指向 `http://127.0.0.1:8788`，以及 cloudflared 是否使用 `network_mode: host`。如果 Tunnel 无法连接，检查第二台服务器出站 7844/TCP、7844/UDP 和 DNS。
+cloudflared 的健康检查会调用本机 metrics `/ready`，确认连接器至少已经建立可服务连接；LONGOS 的外部检查再验证真实公网路由和 relay `/health`。如果本机健康而公网返回 502，检查 Tunnel Route 是否精确指向 `http://127.0.0.1:8788`，以及 cloudflared 是否使用 `network_mode: host`。如果 Tunnel 无法连接，检查第二台服务器出站 7844/TCP、7844/UDP 和 DNS。
 
 ## 七、在 LONGOS 后台连接第二台服务器
 

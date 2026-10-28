@@ -5,9 +5,16 @@ set -eu
 : "${MAIL_DOMAINS:?MAIL_DOMAINS is required}"
 : "${ALLOWED_SENDER_DOMAINS:?ALLOWED_SENDER_DOMAINS is required}"
 
-if [ -z "${RELAY_SHARED_SECRET:-}" ] \
-  && [ -z "${LONGOS_RELAY_SHARED_SECRET:-}" ] \
-  && [ -z "${CLOUD_MAIL_RELAY_SHARED_SECRET:-}" ]; then
+secret_is_configured() {
+  secret_name="$1"
+  eval "secret_value=\${$secret_name:-}"
+  eval "secret_file=\${${secret_name}_FILE:-}"
+  [ -n "$secret_value" ] || { [ -n "$secret_file" ] && [ -r "$secret_file" ] && [ -s "$secret_file" ]; }
+}
+
+if ! secret_is_configured RELAY_SHARED_SECRET \
+  && ! secret_is_configured LONGOS_RELAY_SHARED_SECRET \
+  && ! secret_is_configured CLOUD_MAIL_RELAY_SHARED_SECRET; then
   echo "At least one relay client secret is required" >&2
   exit 1
 fi

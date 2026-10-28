@@ -4,6 +4,7 @@
 
 - Document the LONGOS control-site visual mail-egress editor, live PTR mapping, and copyable second-server configuration checklist.
 - Added a Coolify-native remote mail-node stack that runs the HMAC relay and a pinned Cloudflare Tunnel connector together without binding public 80/443, exposes every setting through Coolify, keeps DKIM/queue/idempotency volumes stable across redeploys, bounds container logs, and excludes secrets from the Docker build context.
+- Hardened the remote node with Docker secret files for both isolated HMAC keys and the Cloudflare Tunnel token, strict single-line secret-file validation, a real cloudflared `/ready` health check on loopback-only metrics, dropped connector capabilities, and conservative memory/PID budgets for a 2 GiB VPS shared with 3X-UI.
 
 ### Mail reliability and safety
 

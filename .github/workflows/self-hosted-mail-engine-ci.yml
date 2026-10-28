@@ -117,6 +117,43 @@ jobs:
         run: npm ci --no-audit --no-fund && npm audit --omit=dev --audit-level=moderate && npm test
       - name: Build relay image
         run: docker build --tag cloud-mail-relay:ci ./mail-relay
+      - name: Smoke-test file-mounted relay secrets
+        shell: bash
+        run: |
+          secret_dir="$(mktemp -d)"
+          container="cloud-mail-relay-secret-ci"
+          cleanup() {
+            docker rm --force "$container" >/dev/null 2>&1 || true
+            rm -rf "$secret_dir"
+          }
+          trap cleanup EXIT
+          printf '%s' 'longos-longos-longos-longos-123456' > "$secret_dir/longos"
+          printf '%s' 'cloud-mail-cloud-mail-cloud-123456' > "$secret_dir/cloud-mail"
+          chmod 600 "$secret_dir/longos" "$secret_dir/cloud-mail"
+          docker run --detach --name "$container" \
+            --env MAIL_HOSTNAME=mailout.example.com \
+            --env MAIL_PUBLIC_IPS=8.8.8.8 \
+            --env MAIL_DOMAINS=example.com \
+            --env ALLOWED_SENDER_DOMAINS=example.com \
+            --env LONGOS_RELAY_SHARED_SECRET_FILE=/run/secrets/longos \
+            --env CLOUD_MAIL_RELAY_SHARED_SECRET_FILE=/run/secrets/cloud-mail \
+            --env IDEMPOTENCY_STORE_PATH=/var/lib/cloud-mail-relay/idempotency.jsonl \
+            --mount "type=bind,src=$secret_dir/longos,dst=/run/secrets/longos,readonly" \
+            --mount "type=bind,src=$secret_dir/cloud-mail,dst=/run/secrets/cloud-mail,readonly" \
+            cloud-mail-relay:ci
+          for attempt in $(seq 1 30); do
+            if docker exec "$container" node -e \
+              "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              exit 0
+            fi
+            if ! docker inspect --format '{{.State.Running}}' "$container" | grep -qx true; then
+              docker logs "$container"
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs "$container"
+          exit 1
       - name: Validate Coolify remote-node Compose
         env:
           MAIL_HOSTNAME: mailout.example.com

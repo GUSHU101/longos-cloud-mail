@@ -28,7 +28,7 @@ Proxy: Custom (None)
 Domain: 留空
 ```
 
-该 Compose 会同时启动 relay 与固定版本的 cloudflared，只把 API 绑定到 `127.0.0.1:8788`，并通过 Tunnel Token 建立出站连接。Coolify变量模板见 [`coolify.env.example`](./coolify.env.example)。
+该 Compose 会同时启动 relay 与固定版本的 cloudflared，只把 API 绑定到 `127.0.0.1:8788`，并通过 Tunnel Token 建立出站连接。HMAC 与 Tunnel Token 会转换为 Docker Secret 文件，不出现在容器配置环境或命令行；cloudflared 使用本机 `/ready` 状态检查，两个服务还带有适合 2 GiB VPS 的内存、进程和日志边界。Coolify变量模板见 [`coolify.env.example`](./coolify.env.example)。
 
 ### 兼容：手动部署并复用现有 HTTPS 代理
 

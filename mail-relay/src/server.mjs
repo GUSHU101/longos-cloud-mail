@@ -20,6 +20,7 @@ import { domainToASCII } from 'node:url';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { verifySignedRequest } from './security.mjs';
+import {readSecret} from './secret.mjs';
 
 const nonPublicIpRanges = new BlockList();
 for (const [network, prefix, type] of [
@@ -47,10 +48,14 @@ for (const [network, prefix, type] of [
 ]) nonPublicIpRanges.addSubnet(network, prefix, type);
 
 const port = toPositiveInt(process.env.PORT, 3000);
-const legacySharedSecret = process.env.RELAY_SHARED_SECRET || '';
+const legacySharedSecret = readSecret('RELAY_SHARED_SECRET');
+const explicitLongosSharedSecret = readSecret('LONGOS_RELAY_SHARED_SECRET');
+const explicitCloudMailSharedSecret = readSecret('CLOUD_MAIL_RELAY_SHARED_SECRET');
+const longosSharedSecret = explicitLongosSharedSecret || legacySharedSecret;
+const cloudMailSharedSecret = explicitCloudMailSharedSecret || legacySharedSecret;
 const clientSecrets = new Map([
-  ['longos', process.env.LONGOS_RELAY_SHARED_SECRET || legacySharedSecret],
-  ['cloud-mail', process.env.CLOUD_MAIL_RELAY_SHARED_SECRET || legacySharedSecret],
+  ['longos', longosSharedSecret],
+  ['cloud-mail', cloudMailSharedSecret],
 ].filter(([, secret]) => secret));
 const maxRequestBytes = toPositiveInt(process.env.MAX_REQUEST_BYTES, 25 * 1024 * 1024);
 const maxAttachmentBytes = toPositiveInt(process.env.MAX_ATTACHMENT_BYTES, 20 * 1024 * 1024);
@@ -106,9 +111,9 @@ for (const [client, secret] of clientSecrets) {
   }
 }
 if (
-  process.env.LONGOS_RELAY_SHARED_SECRET
-  && process.env.CLOUD_MAIL_RELAY_SHARED_SECRET
-  && process.env.LONGOS_RELAY_SHARED_SECRET === process.env.CLOUD_MAIL_RELAY_SHARED_SECRET
+  explicitLongosSharedSecret
+  && explicitCloudMailSharedSecret
+  && explicitLongosSharedSecret === explicitCloudMailSharedSecret
 ) {
   throw new Error('LONGOS and Cloud Mail relay secrets must be different');
 }

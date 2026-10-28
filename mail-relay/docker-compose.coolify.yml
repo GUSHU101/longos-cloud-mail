@@ -1,0 +1,93 @@
+services:
+  relay:
+    build:
+      context: .
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Set the PTR-aligned mail hostname}
+      MAIL_PUBLIC_IPS: ${MAIL_PUBLIC_IPS:?Set the dedicated SMTP egress public IP}
+      MAIL_DOMAINS: ${MAIL_DOMAINS:?Set the DKIM signing domains}
+      ALLOWED_SENDER_DOMAINS: ${ALLOWED_SENDER_DOMAINS:?Set the allowed sender domains}
+      RELAY_SHARED_SECRET: ${RELAY_SHARED_SECRET:-}
+      LONGOS_RELAY_SHARED_SECRET: ${LONGOS_RELAY_SHARED_SECRET:?Set the LONGOS HMAC secret}
+      CLOUD_MAIL_RELAY_SHARED_SECRET: ${CLOUD_MAIL_RELAY_SHARED_SECRET:?Set the Cloud Mail HMAC secret}
+      DKIM_SELECTOR: ${DKIM_SELECTOR:-mail2026}
+      DNS_RECORDS_PATH: /var/lib/cloud-mail-relay-dns
+      INET_PROTOCOLS: ${INET_PROTOCOLS:-ipv4}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-26214400}
+      MAX_ATTACHMENT_BYTES: ${MAX_ATTACHMENT_BYTES:-20971520}
+      MAX_ATTACHMENTS: ${MAX_ATTACHMENTS:-25}
+      MAX_RECIPIENTS: ${MAX_RECIPIENTS:-50}
+      MAX_REQUESTS_PER_MINUTE: ${MAX_REQUESTS_PER_MINUTE:-120}
+      MAX_REQUESTS_PER_MINUTE_GLOBAL: ${MAX_REQUESTS_PER_MINUTE_GLOBAL:-1200}
+      MAX_INCOMING_REQUESTS_PER_MINUTE: ${MAX_INCOMING_REQUESTS_PER_MINUTE:-2400}
+      MAX_CONCURRENT_SENDS: ${MAX_CONCURRENT_SENDS:-25}
+      MAX_QUEUE_MESSAGES: ${MAX_QUEUE_MESSAGES:-1000}
+      MAX_NONCE_RECORDS: ${MAX_NONCE_RECORDS:-12000}
+      MAX_CONNECTIONS: ${MAX_CONNECTIONS:-100}
+      MAX_REQUESTS_PER_SOCKET: ${MAX_REQUESTS_PER_SOCKET:-100}
+      MAX_HEADERS_COUNT: ${MAX_HEADERS_COUNT:-48}
+      REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-60000}
+      SIGNATURE_WINDOW_SECONDS: ${SIGNATURE_WINDOW_SECONDS:-300}
+      IDEMPOTENCY_RETENTION_SECONDS: ${IDEMPOTENCY_RETENTION_SECONDS:-86400}
+      MAX_IDEMPOTENCY_RECORDS: ${MAX_IDEMPOTENCY_RECORDS:-100000}
+      IDEMPOTENCY_STORE_PATH: /var/lib/cloud-mail-relay/idempotency.jsonl
+    ports:
+      - "127.0.0.1:${RELAY_HTTP_PORT:-8788}:3000"
+    volumes:
+      - postfix-spool:/var/spool/postfix
+      - dkim-keys:/var/lib/dkim
+      - relay-dns:/var/lib/cloud-mail-relay-dns
+      - relay-state:/var/lib/cloud-mail-relay
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.10.5}
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --protocol
+      - ${TUNNEL_PROTOCOL:-auto}
+      - --loglevel
+      - ${TUNNEL_LOG_LEVEL:-info}
+      - run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set the remotely-managed Cloudflare Tunnel token}
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  postfix-spool:
+    name: ${MAIL_NODE_VOLUME_PREFIX:-longos-remote-mail}-postfix-spool
+  dkim-keys:
+    name: ${MAIL_NODE_VOLUME_PREFIX:-longos-remote-mail}-dkim-keys
+  relay-dns:
+    name: ${MAIL_NODE_VOLUME_PREFIX:-longos-remote-mail}-relay-dns
+  relay-state:
+    name: ${MAIL_NODE_VOLUME_PREFIX:-longos-remote-mail}-relay-state

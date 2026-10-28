@@ -18,7 +18,7 @@ LONGOS 下单/召回邮件 ── 内网 HMAC ──────┘
 
 Cloudflare Worker 不能直接连接公网 TCP 25，因此不能替代 SMTP 邮件服务器。Cloudflare 在这里负责 Worker 运行、收件路由和数据存储；真正的站外发件由 LONGOS 服务器内置的 Postfix/OpenDKIM 完成。Cloudflare Email Sending 与 Resend 仅保留为独立部署的可选兼容能力，一体化部署会锁定为 LONGOS 内置引擎，不会静默回退到第三方。
 
-如果网站服务器没有可控 PTR/rDNS 或出站 TCP 25，可让 LONGOS 与 Cloud Mail 继续留在主服务器，只在第二台服务器部署本仓库的 `mail-relay/` 作为专用邮件出口。主站通过 HTTPS + HMAC 调用它并读取签名的公开身份清单，Cloud Mail 仍只连接 LONGOS 主站。最新版 LONGOS 可在控制站后台用可视化表单保存拓扑、预览 PTR 映射并复制本节点配置清单。完整步骤见[第二台服务器专用邮件出口节点](./doc/REMOTE_MAIL_NODE.md)。
+如果网站服务器没有可控 PTR/rDNS 或出站 TCP 25，可让完整 LONGOS 与 Cloud Mail 继续留在主服务器/Cloudflare，只在第二台服务器运行本仓库 `mail-relay/` 子目录的专用邮件出口组件。仓库提供专门的 Coolify Compose，把 mail-relay 与 Cloudflare Tunnel 放在同一资源中，只监听 `127.0.0.1:8788`，不占用 80/443，可与 3X-UI 共存；它不会在第二台服务器安装 Cloud Mail UI、Worker、数据库或 LONGOS。完整步骤见[第二台服务器专用邮件出口节点](./doc/REMOTE_MAIL_NODE.md)。
 
 ## 最推荐的部署方式
 
@@ -86,7 +86,7 @@ LONGOS 的下单、订单状态、账户、售后和弃单召回邮件直接走�
 - [可选：主站不搬迁，使用第二台服务器的公网 IP 与 PTR/rDNS 发信](./doc/REMOTE_MAIL_NODE.md)
 - [English README](./README-en.md)
 
-`mail-relay/` 默认无需单独部署，因为 LONGOS 的 Coolify Compose 已经包含中继、Postfix 与 OpenDKIM。仅当主服务器不适合直接发信时，才按上述专用出口节点文档把它部署到第二台服务器；不要在第二台服务器重复部署完整 LONGOS 或 Cloud Mail。
+`mail-relay/` 默认无需单独部署，因为 LONGOS 的 Coolify Compose 已经包含中继、Postfix 与 OpenDKIM。仅当主服务器不适合直接发信时，才按上述专用出口节点文档把 `/mail-relay/docker-compose.coolify.yml` 部署到第二台服务器；不要在第二台服务器重复部署完整 LONGOS 或 Cloud Mail，也不要为该节点启动会争抢 80/443 的 Coolify Proxy。
 
 ## 本地部署与排障
 

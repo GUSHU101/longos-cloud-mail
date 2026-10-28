@@ -8,13 +8,29 @@
 - 可为公网 IP 设置 PTR，PTR 必须指向 `MAIL_HOSTNAME`。
 - `MAIL_HOSTNAME` 的 DNS A 记录必须反向指向同一个公网 IP，并设置为 Cloudflare DNS Only。
 - 发信域名需要配置 SPF、DKIM 和 DMARC。
-- 主机上已有 Nginx、Caddy 或其他 HTTPS 反向代理。
+- 能提供标准 HTTPS API 入口。已有反向代理时可复用；80/443 被 3X-UI 占用时推荐使用随仓库提供的 Cloudflare Tunnel Compose。
 
 ## 部署
 
 通常使用 LONGOS 无需执行本节：LONGOS 的 Coolify Raw Compose 已把相同组件并入网站栈。唯一例外是主服务器没有可控 PTR/rDNS 或出站 TCP 25，此时 LONGOS 与 Cloud Mail 仍留在主服务器，只在第二台服务器部署本目录作为专用邮件出口节点。最新版 LONGOS 控制站后台会生成本目录所需的公开配置清单；两条 HMAC 密钥仍需通过服务器 Secret 配置。请按[第二台服务器专用邮件出口节点](../doc/REMOTE_MAIL_NODE.md)操作，Cloud Mail 仍只连接 LONGOS 主站。
 
 LONGOS 用户请直接阅读[一体化自建邮件部署与升级教程](../doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)，其中包含 Cloudflare、GitHub Actions、DNS/PTR、租户发件域和升级步骤。
+
+### 推荐：Coolify 远程服务器 + Cloudflare Tunnel
+
+第二台服务器由主站 Coolify 管理、或 80/443 已被 3X-UI 使用时，请按[第二台服务器专用邮件出口节点](../doc/REMOTE_MAIL_NODE.md)部署。Coolify仍从本仓库读取代码，但下面的 Base directory 会保证第二台服务器只构建和运行 `mail-relay` 子组件，而不是完整 Cloud Mail：
+
+```text
+Base directory: /mail-relay
+Compose location: /docker-compose.coolify.yml
+Compose deployment: Raw
+Proxy: Custom (None)
+Domain: 留空
+```
+
+该 Compose 会同时启动 relay 与固定版本的 cloudflared，只把 API 绑定到 `127.0.0.1:8788`，并通过 Tunnel Token 建立出站连接。Coolify变量模板见 [`coolify.env.example`](./coolify.env.example)。
+
+### 兼容：手动部署并复用现有 HTTPS 代理
 
 ```bash
 cd mail-relay

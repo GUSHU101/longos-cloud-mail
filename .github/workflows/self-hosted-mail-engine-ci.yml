@@ -117,3 +117,13 @@ jobs:
         run: npm ci --no-audit --no-fund && npm audit --omit=dev --audit-level=moderate && npm test
       - name: Build relay image
         run: docker build --tag cloud-mail-relay:ci ./mail-relay
+      - name: Validate Coolify remote-node Compose
+        env:
+          MAIL_HOSTNAME: mailout.example.com
+          MAIL_PUBLIC_IPS: 8.8.8.8
+          MAIL_DOMAINS: example.com
+          ALLOWED_SENDER_DOMAINS: example.com
+          LONGOS_RELAY_SHARED_SECRET: longos-longos-longos-longos-123456
+          CLOUD_MAIL_RELAY_SHARED_SECRET: cloud-mail-cloud-mail-cloud-123456
+          TUNNEL_TOKEN: validation-token-not-used-for-a-connection
+        run: docker compose --file mail-relay/docker-compose.coolify.yml config --quiet

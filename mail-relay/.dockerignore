@@ -1,4 +1,8 @@
-.env
-node_modules
-npm-debug.log
-.git
+**
+!.dockerignore
+!Dockerfile
+!package.json
+!package-lock.json
+!src/
+!src/**
+!entrypoint.sh

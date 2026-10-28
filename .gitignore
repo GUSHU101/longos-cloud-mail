@@ -36,3 +36,4 @@ mail-worker/wrangler.generated.toml
 .venv
 git-tools.js
 /mail-relay/.env
+/mail-relay/.env.coolify

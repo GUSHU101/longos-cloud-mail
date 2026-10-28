@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Document the LONGOS control-site visual mail-egress editor, live PTR mapping, and copyable second-server configuration checklist.
+
 ### Mail reliability and safety
 
 - Made Cloud Mail relay retries idempotent by generating and reusing a stable request ID automatically, preventing duplicate delivery after an accepted response is lost.

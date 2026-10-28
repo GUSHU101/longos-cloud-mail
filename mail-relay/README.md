@@ -12,7 +12,7 @@
 
 ## 部署
 
-通常使用 LONGOS 无需执行本节：LONGOS 的 Coolify Raw Compose 已把相同组件并入网站栈。唯一例外是主服务器没有可控 PTR/rDNS 或出站 TCP 25，此时 LONGOS 与 Cloud Mail 仍留在主服务器，只在第二台服务器部署本目录作为专用邮件出口节点。请按[第二台服务器专用邮件出口节点](../doc/REMOTE_MAIL_NODE.md)配置，Cloud Mail 仍只连接 LONGOS 主站。
+通常使用 LONGOS 无需执行本节：LONGOS 的 Coolify Raw Compose 已把相同组件并入网站栈。唯一例外是主服务器没有可控 PTR/rDNS 或出站 TCP 25，此时 LONGOS 与 Cloud Mail 仍留在主服务器，只在第二台服务器部署本目录作为专用邮件出口节点。最新版 LONGOS 控制站后台会生成本目录所需的公开配置清单；两条 HMAC 密钥仍需通过服务器 Secret 配置。请按[第二台服务器专用邮件出口节点](../doc/REMOTE_MAIL_NODE.md)操作，Cloud Mail 仍只连接 LONGOS 主站。
 
 LONGOS 用户请直接阅读[一体化自建邮件部署与升级教程](../doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)，其中包含 Cloudflare、GitHub Actions、DNS/PTR、租户发件域和升级步骤。
 

@@ -66,9 +66,21 @@ server {
 }
 ```
 
-## 三、让主服务器使用第二台服务器
+## 三、在 LONGOS 后台连接第二台服务器
 
-在 LONGOS 的 Coolify 环境变量中设置：
+使用最新版 LONGOS 后，进入控制站后台“系统 → 基础设置 → 邮件设置 → 全平台邮件出口拓扑”，选择“第二台服务器出口”，依次填写：
+
+- 中继 HTTPS 地址：`https://relay-api.example.com`；
+- 邮件主机名：`mailout.example.com`；
+- 邮件出口公网 IP：第二台服务器的真实公网 IP；
+- DKIM 签名域、允许发件域和平台默认发件域：`example.com`；
+- DKIM Selector：与第二台服务器的 `DKIM_SELECTOR` 完全一致。
+
+页面会实时生成 PTR/rDNS 映射以及可以复制到本项目 `mail-relay/.env` 的公开配置清单。后台不会接收或显示两条 HMAC 密钥，它们仍然必须通过 LONGOS Coolify Secret 和第二台服务器 Secret 分别配置。
+
+保存后配置会通过 LONGOS 共享 storage 卷立即作用于 app、worker、scheduler 和所有租户，不需要为了修改公开拓扑而重新部署 LONGOS。然后点击“立即检测”核对远端身份、DNS 与 PTR。
+
+不可使用后台配置时，也可以继续在 LONGOS 的 Coolify 环境变量中设置：
 
 ```dotenv
 MAIL_RELAY_ENDPOINT=https://relay-api.example.com
@@ -79,7 +91,7 @@ MAIL_RELAY_DOMAINS=example.com
 MAIL_RELAY_ALLOWED_SENDER_DOMAINS=example.com
 ```
 
-然后 Redeploy LONGOS。Compose 仍会保留同机中继容器及其持久卷，但业务投递和 Cloud Mail 网关会改走外部 HTTPS 节点。LONGOS 使用 HMAC 从第二台服务器读取仅含主机名、公网 IP 和 DKIM 公钥的身份清单；私钥永远不会离开邮件节点。若两台服务器的主机名、IP、selector、签名域或 DKIM 不一致，DNS 同步会失败关闭，不会把错误身份发布到公网。
+使用 Coolify 环境变量时需要 Redeploy LONGOS；使用控制站后台保存时无需 Redeploy。Compose 仍会保留同机中继容器及其持久卷，但业务投递和 Cloud Mail 网关会改走外部 HTTPS 节点。LONGOS 使用 HMAC 从第二台服务器读取仅含主机名、公网 IP 和 DKIM 公钥的身份清单；私钥永远不会离开邮件节点。若两台服务器的主机名、IP、selector、签名域或 DKIM 不一致，DNS 同步会失败关闭，不会把错误身份发布到公网。
 
 Cloud Mail 仍只配置主服务器：
 

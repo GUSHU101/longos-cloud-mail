@@ -108,7 +108,7 @@ Tenant administrators can change the default and purpose-specific sender address
 
 The `From` identity always comes from the Cloud Mail account selected by the user. The Worker verifies that the account belongs to that user and that its domain is allowed by the assigned role; the LONGOS relay does not replace it with a platform-wide default address.
 
-Self-hosting still requires a static public IP, configurable PTR/rDNS, and outbound TCP port 25. LONGOS encrypts the integration token with `APP_KEY` for later retrieval and uses its hash for authentication; the token is also stored in GitHub Secrets and the Cloudflare Worker secret. Internal HMAC credentials remain only in LONGOS server-side secrets and, when enabled, the dedicated mail node's server-side secrets; neither credential is stored in the browser or D1.
+Self-hosting still requires a static public IP, configurable PTR/rDNS, and outbound TCP port 25. The latest LONGOS control-site mail page includes a visual egress-topology editor, live PTR mapping, and a copyable second-server configuration checklist. LONGOS encrypts the integration token with `APP_KEY` for later retrieval and uses its hash for authentication; the token is also stored in GitHub Secrets and the Cloudflare Worker secret. Internal HMAC credentials remain only in LONGOS server-side secrets and, when enabled, the dedicated mail node's server-side secrets; neither credential is stored in the browser or D1.
 
 ## Project Structure
 

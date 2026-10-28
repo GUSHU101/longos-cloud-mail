@@ -13,12 +13,38 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { BlockList, isIP } from 'node:net';
 import { execFile } from 'node:child_process';
 import { domainToASCII } from 'node:url';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { verifySignedRequest } from './security.mjs';
+
+const nonPublicIpRanges = new BlockList();
+for (const [network, prefix, type] of [
+  ['0.0.0.0', 8, 'ipv4'],
+  ['10.0.0.0', 8, 'ipv4'],
+  ['100.64.0.0', 10, 'ipv4'],
+  ['127.0.0.0', 8, 'ipv4'],
+  ['169.254.0.0', 16, 'ipv4'],
+  ['172.16.0.0', 12, 'ipv4'],
+  ['192.0.0.0', 24, 'ipv4'],
+  ['192.0.2.0', 24, 'ipv4'],
+  ['192.168.0.0', 16, 'ipv4'],
+  ['198.18.0.0', 15, 'ipv4'],
+  ['198.51.100.0', 24, 'ipv4'],
+  ['203.0.113.0', 24, 'ipv4'],
+  ['224.0.0.0', 4, 'ipv4'],
+  ['240.0.0.0', 4, 'ipv4'],
+  ['::', 128, 'ipv6'],
+  ['::1', 128, 'ipv6'],
+  ['100::', 64, 'ipv6'],
+  ['2001:db8::', 32, 'ipv6'],
+  ['fc00::', 7, 'ipv6'],
+  ['fe80::', 10, 'ipv6'],
+  ['ff00::', 8, 'ipv6'],
+]) nonPublicIpRanges.addSubnet(network, prefix, type);
 
 const port = toPositiveInt(process.env.PORT, 3000);
 const legacySharedSecret = process.env.RELAY_SHARED_SECRET || '';
@@ -53,6 +79,23 @@ const allowedSenderDomains = new Set(
     .filter(Boolean)
     .map(normalizeDomain),
 );
+const signingDomains = new Set(
+  (process.env.MAIL_DOMAINS || process.env.ALLOWED_SENDER_DOMAINS || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map(normalizeDomain),
+);
+const mailHostname = normalizeDomain(
+  process.env.MAIL_HOSTNAME || `mailout.${[...allowedSenderDomains][0] || 'example.com'}`,
+);
+const dkimSelector = String(process.env.DKIM_SELECTOR || 'mail2026').trim().toLowerCase();
+const dnsRecordsPath = String(process.env.DNS_RECORDS_PATH || '/var/lib/cloud-mail-relay-dns').trim();
+const configuredPublicIpValues = String(process.env.MAIL_PUBLIC_IPS || '')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean);
+const publicIps = [...new Set(configuredPublicIpValues.filter(isPublicIp))];
 
 if (clientSecrets.size === 0) {
   throw new Error('At least one relay client secret must be configured');
@@ -71,6 +114,18 @@ if (
 }
 if (allowedSenderDomains.size === 0) {
   throw new Error('ALLOWED_SENDER_DOMAINS must contain at least one domain');
+}
+if (signingDomains.size === 0 || [...allowedSenderDomains].some(domain => !signingDomains.has(domain))) {
+  throw new Error('MAIL_DOMAINS must contain every allowed sender domain');
+}
+if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(dkimSelector)) {
+  throw new Error('DKIM_SELECTOR must be a valid selector');
+}
+if (!isAbsolute(dnsRecordsPath)) {
+  throw new Error('DNS_RECORDS_PATH must be an absolute path');
+}
+if (configuredPublicIpValues.length !== publicIps.length) {
+  throw new Error('MAIL_PUBLIC_IPS must contain only unique globally routable IP addresses');
 }
 if (!idempotencyStorePath && process.env.NODE_ENV !== 'test') {
   throw new Error('IDEMPOTENCY_STORE_PATH is required for restart-safe delivery');
@@ -100,6 +155,12 @@ const execFileAsync = promisify(execFile);
 function toPositiveInt(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isPublicIp(value) {
+  const version = isIP(value);
+  if (version === 6 && String(value).toLowerCase().includes('::ffff:')) return false;
+  return version !== 0 && !nonPublicIpRanges.check(value, version === 4 ? 'ipv4' : 'ipv6');
 }
 
 function json(response, status, body, extraHeaders = {}) {
@@ -540,6 +601,55 @@ function normalizeMessage(body) {
   };
 }
 
+function authenticateSignedRequest(request, rawBody = '') {
+  const relayClient = cleanHeader(
+    request.headers['x-relay-client'] || (legacySharedSecret ? 'legacy' : ''),
+    'relay client',
+    32,
+  );
+  const secret = relayClient === 'legacy' ? legacySharedSecret : clientSecrets.get(relayClient);
+  if (!secret || !verifySignature(request, rawBody, secret, relayClient)) return null;
+  return relayClient;
+}
+
+function identityPayload() {
+  const root = resolve(dnsRecordsPath);
+  const records = [];
+  for (const domain of signingDomains) {
+    const path = resolve(join(root, domain, `${dkimSelector}.txt`));
+    const relativePath = relative(root, path);
+    if (relativePath.startsWith('..') || relativePath === '' || !existsSync(path)) {
+      throw Object.assign(new Error(`DKIM public key is not ready for ${domain}`), { status: 503 });
+    }
+    const value = readFileSync(path, 'utf8').trim();
+    if (value.length > 4096 || /[\r\n]/.test(value)
+      || !/^v=DKIM1;.*(?:^|;\s*)p=[A-Za-z0-9+/=]+/i.test(value)) {
+      throw Object.assign(new Error(`Invalid DKIM public key for ${domain}`), { status: 503 });
+    }
+    records.push({ type: 'TXT', name: `${dkimSelector}._domainkey.${domain}`, value });
+  }
+
+  return {
+    schema: 1,
+    status: 'ok',
+    hostname: mailHostname,
+    publicIps,
+    dkimSelector,
+    signingDomains: [...signingDomains],
+    records,
+  };
+}
+
+function handleIdentity(request, response) {
+  if (incomingRateLimitExceeded()) {
+    return json(response, 429, { status: 'error', message: 'Incoming request limit exceeded' }, { 'retry-after': '60' });
+  }
+  if (!authenticateSignedRequest(request, '')) {
+    return json(response, 401, { status: 'error', message: 'Invalid or expired signature' });
+  }
+  return json(response, 200, identityPayload());
+}
+
 async function handleSend(request, response) {
   if (incomingRateLimitExceeded()) {
     return json(response, 429, { accepted: false, message: 'Incoming request limit exceeded' }, { 'retry-after': '60' });
@@ -557,12 +667,8 @@ async function handleSend(request, response) {
     }
   }
   const rawBody = await readBody(request);
-  const relayClient = cleanHeader(request.headers['x-relay-client'] || (legacySharedSecret ? 'legacy' : ''), 'relay client', 32);
-  const secret = relayClient === 'legacy' ? legacySharedSecret : clientSecrets.get(relayClient);
-  if (!secret) {
-    return json(response, 401, { accepted: false, message: 'Unknown relay client' });
-  }
-  if (!verifySignature(request, rawBody, secret, relayClient)) {
+  const relayClient = authenticateSignedRequest(request, rawBody);
+  if (!relayClient) {
     return json(response, 401, { accepted: false, message: 'Invalid or expired signature' });
   }
   // Count every authenticated request before JSON parsing or attachment
@@ -708,15 +814,15 @@ async function relayHealth(force = false) {
     const queueDepth = queue.ok
       ? String(queue.stdout).split('\n').filter(line => line.trim() !== '').length
       : maxQueueMessages + 1;
-    const healthy = postfix.ok
-      && opendkim.ok
-      && queue.ok
-      && queueDepth <= maxQueueMessages
-      && receiptStoreHealthy
-      && storeWritable
-      && receiptCapacityAvailable();
+    const components = {
+      postfix: postfix.ok,
+      opendkim: opendkim.ok,
+      queue: queue.ok && queueDepth <= maxQueueMessages,
+      receiptStore: receiptStoreHealthy && storeWritable && receiptCapacityAvailable(),
+    };
+    const healthy = Object.values(components).every(Boolean);
     lastHealthCheck = Date.now();
-    cachedHealth = { healthy, queueDepth };
+    cachedHealth = { healthy, queueDepth, components };
     return cachedHealth;
   })().finally(() => {
     healthCheckPromise = null;
@@ -731,10 +837,19 @@ const server = http.createServer(async (request, response) => {
       return json(response, health.healthy ? 200 : 503, {
         status: health.healthy ? 'ok' : 'degraded',
         queueDepth: health.queueDepth,
+        queueLimit: maxQueueMessages,
         uncertainRequests: uncertainRequests.size,
         receiptRecords: receiptRecordCount(),
         receiptCapacity: maxIdempotencyRecords,
+        idempotencyRecords: receiptRecordCount(),
+        idempotencyCapacity: maxIdempotencyRecords,
+        components: Object.fromEntries(
+          Object.entries(health.components || {}).map(([name, ready]) => [name, ready ? 'ok' : 'degraded']),
+        ),
       });
+    }
+    if (request.method === 'GET' && request.url === '/v1/identity') {
+      return handleIdentity(request, response);
     }
     if (request.method === 'POST' && request.url === '/v1/send') {
       return await handleSend(request, response);
@@ -775,6 +890,8 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 export {
+  identityPayload,
+  isPublicIp,
   normalizeAddress,
   normalizeDomain,
   normalizeMessage,

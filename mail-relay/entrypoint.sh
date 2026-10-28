@@ -14,6 +14,12 @@ fi
 
 DKIM_SELECTOR="${DKIM_SELECTOR:-mail2026}"
 INET_PROTOCOLS="${INET_PROTOCOLS:-ipv4}"
+DNS_RECORDS_PATH="${DNS_RECORDS_PATH:-/var/lib/cloud-mail-relay-dns}"
+
+case "$DNS_RECORDS_PATH" in
+  /*) ;;
+  *) echo "DNS_RECORDS_PATH must be an absolute path" >&2; exit 1 ;;
+esac
 
 normalize_domain() {
   node --input-type=module -e '
@@ -79,8 +85,9 @@ done
 IFS="$old_ifs"
 
 printf '%s\n' "$MAIL_HOSTNAME" > /etc/mailname
-mkdir -p /run/opendkim /etc/opendkim /var/lib/dkim
+mkdir -p /run/opendkim /etc/opendkim /var/lib/dkim "$DNS_RECORDS_PATH"
 chown opendkim:opendkim /run/opendkim /var/lib/dkim
+chmod 0755 "$DNS_RECORDS_PATH"
 
 : > /etc/opendkim/KeyTable
 : > /etc/opendkim/SigningTable
@@ -105,6 +112,24 @@ for raw_domain in $MAIL_DOMAINS; do
   printf '*@%s %s._domainkey.%s\n' "$domain" "$DKIM_SELECTOR" "$domain" \
     >> /etc/opendkim/SigningTable
   printf '%s\n*.%s\n' "$domain" "$domain" >> /etc/opendkim/TrustedHosts
+
+  # The API publishes only this derived public value to LONGOS. The private
+  # signing key stays in /var/lib/dkim and is never included in the identity
+  # response or mounted into another container.
+  public_dir="$DNS_RECORDS_PATH/$domain"
+  public_record="$public_dir/$DKIM_SELECTOR.txt"
+  public_temp="$public_record.tmp.$$"
+  mkdir -p "$public_dir"
+  dkim_value="$(grep -o '"[^"]*"' "$key_dir/$DKIM_SELECTOR.txt" | tr -d '"\n')"
+  if ! printf '%s' "$dkim_value" | grep -Eqi '^v=DKIM1;.*(^|[;[:space:]])p=[A-Za-z0-9+/=]+'; then
+    echo "Unable to extract the public DKIM value for $domain" >&2
+    rm -f "$public_temp"
+    exit 1
+  fi
+  umask 022
+  printf '%s\n' "$dkim_value" > "$public_temp"
+  chmod 0644 "$public_temp"
+  mv -f "$public_temp" "$public_record"
 done
 IFS="$old_ifs"
 

@@ -39,6 +39,7 @@ This distribution retains the upstream license and attribution for [maillab/clou
 - [Deployment Guide](https://doc.skymail.ink/en/)<br>
 - [Step-by-step Cloudflare Workers deployment guide (Chinese)](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md)<br>
 - [Integrated Cloud Mail + LONGOS self-hosted delivery guide (Chinese)](./doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)<br>
+- [Optional dedicated mail-egress node on a second server (Chinese)](./doc/REMOTE_MAIL_NODE.md)<br>
 
 
 | ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
@@ -93,7 +94,9 @@ This distribution retains the upstream license and attribution for [maillab/clou
 
 ## Integrated LONGOS self-hosted sending
 
-When Cloud Mail is paired with LONGOS, a Git-based Coolify Raw Compose deployment starts the website, database, workers, scheduler, and Postfix/OpenDKIM together behind Coolify's integrated Caddy. There is no second relay deployment. The Worker presents a scoped integration token only to `https://your-control-domain/_longos/mail-relay`; LONGOS validates the tenant sender before translating the request to private-network HMAC authentication.
+When Cloud Mail is paired with LONGOS, a Git-based Coolify Raw Compose deployment starts the website, database, workers, scheduler, and Postfix/OpenDKIM together behind Coolify's integrated Caddy. The Worker presents a scoped integration token only to `https://your-control-domain/_longos/mail-relay`; LONGOS validates the tenant sender before translating the request to HMAC authentication.
+
+The bundled relay is the default. If the primary server cannot provide controllable PTR/rDNS or outbound TCP 25, LONGOS and Cloud Mail can remain there while a second VPS runs only `mail-relay/` as the dedicated SMTP-egress node. LONGOS reads its HMAC-protected public identity manifest and fails closed unless the hostname, egress IPs, signing domains, selector, and DKIM public keys all match. PTR remains configured at the second server's IP provider; an HTTP reverse proxy cannot create PTR.
 
 For the exact Cloudflare Account, API Token, D1/KV/R2, GitHub Actions, custom-domain, Email Routing, initialization, upgrade, and rollback procedure, follow the [complete Cloudflare Workers deployment guide](./doc/CLOUDFLARE_WORKERS_DEPLOYMENT.md).
 
@@ -105,7 +108,7 @@ Tenant administrators can change the default and purpose-specific sender address
 
 The `From` identity always comes from the Cloud Mail account selected by the user. The Worker verifies that the account belongs to that user and that its domain is allowed by the assigned role; the LONGOS relay does not replace it with a platform-wide default address.
 
-Self-hosting still requires a static public IP, configurable PTR/rDNS, and outbound TCP port 25. LONGOS encrypts the integration token with `APP_KEY` for later retrieval and uses its hash for authentication; the token is also stored in GitHub Secrets and the Cloudflare Worker secret. Internal HMAC credentials remain only on the LONGOS server; neither credential is stored in the browser or D1.
+Self-hosting still requires a static public IP, configurable PTR/rDNS, and outbound TCP port 25. LONGOS encrypts the integration token with `APP_KEY` for later retrieval and uses its hash for authentication; the token is also stored in GitHub Secrets and the Cloudflare Worker secret. Internal HMAC credentials remain only in LONGOS server-side secrets and, when enabled, the dedicated mail node's server-side secrets; neither credential is stored in the browser or D1.
 
 ## Project Structure
 

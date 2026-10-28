@@ -12,6 +12,8 @@
 
 ### Operations
 
+- Added a dedicated remote-egress topology: LONGOS and Cloud Mail stay on the primary server while a second VPS runs only the HMAC-authenticated Postfix/OpenDKIM relay and owns the SMTP IP/PTR. The node publishes a signed, public-only identity manifest for strict hostname, public-IP, signing-domain, selector, and DKIM validation; private keys never leave the node.
+- Upgraded `@cloudflare/vite-plugin` to 1.65.0 and Wrangler to 4.154.0, and pinned patched `undici` 7.30.1 across the Cloudflare toolchain after the production audit identified moderate/high vulnerabilities in 7.29.1.
 - Updated the LONGOS integration flow for zero-config mail-host addressing: current LONGOS releases safely discover a blank `MAIL_RELAY_IPS` from the server with multi-source consensus, while explicit values remain the override for dedicated SMTP egress, unusual NAT/policy routing, multiple addresses, or validated IPv6. PTR/rDNS remains provider-managed.
 - Distinguished real dependency vulnerabilities from temporary npm advisory-service failures. Local deployments now warn and continue only for positively identified network/timeout failures with no vulnerability report, while GitHub Actions remains fail-closed for every audit outage and all environments still stop on moderate-or-higher vulnerabilities or unknown audit errors. Relay installation no longer performs npm's redundant implicit audit before the explicit classified audit, avoiding duplicate registry calls and multi-minute stalls.
 - Added an early, read-only Cloudflare account-resource preflight for Worker, D1, KV, and optional R2. Local deployments run it before pnpm preparation, dependency installation, tests, or builds; GitHub runs it at the start of the credential-bearing deployment phase after secret-free verification. It aggregates missing account permissions (including API error codes such as `10000`) into one actionable failure.
@@ -27,7 +29,7 @@
 - Isolated scheduled maintenance tasks so one cleanup failure no longer prevents the remaining recovery, cleanup, analytics, and OAuth jobs from running; failures are still surfaced after all tasks execute.
 - Removed the deprecated Cloudflare Vitest pool that was no longer used by the Node test suite, upgraded the active Worker/frontend toolchain, and pinned patched transitive build dependencies identified by the supply-chain audit.
 - Unified Worker, frontend, and relay installation, audit, test, and build checks in the deployment verifier; pinned CI to Ubuntu 24.04 and disabled retained checkout credentials in every job.
-- Updated Wrangler to 4.151.3 and Nodemailer to 10.1.7 with refreshed lockfiles and successful production dependency audits.
+- Updated Wrangler to 4.154.0, Cloudflare Vite Plugin to 1.65.0, and Nodemailer to 10.1.7 with refreshed lockfiles and successful production dependency audits.
 
 ## v4.5.0 - 2026-10-20
 

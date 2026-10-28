@@ -12,7 +12,7 @@
 
 ## 部署
 
-如果你使用 LONGOS，无需执行本节：LONGOS 的 Coolify Raw Compose 已把相同组件并入网站栈，并通过 `/_longos/mail-relay` 提供 HTTPS 入口。本节只用于不安装 LONGOS 的独立 Cloud Mail 环境。
+通常使用 LONGOS 无需执行本节：LONGOS 的 Coolify Raw Compose 已把相同组件并入网站栈。唯一例外是主服务器没有可控 PTR/rDNS 或出站 TCP 25，此时 LONGOS 与 Cloud Mail 仍留在主服务器，只在第二台服务器部署本目录作为专用邮件出口节点。请按[第二台服务器专用邮件出口节点](../doc/REMOTE_MAIL_NODE.md)配置，Cloud Mail 仍只连接 LONGOS 主站。
 
 LONGOS 用户请直接阅读[一体化自建邮件部署与升级教程](../doc/LONGOS_SELF_HOSTED_DEPLOYMENT.md)，其中包含 Cloudflare、GitHub Actions、DNS/PTR、租户发件域和升级步骤。
 
@@ -20,7 +20,7 @@ LONGOS 用户请直接阅读[一体化自建邮件部署与升级教程](../doc/
 cd mail-relay
 cp .env.example .env
 openssl rand -hex 32
-# 编辑 .env，填入域名和生成的 RELAY_SHARED_SECRET
+# 编辑 .env，填入域名、公网 IP 和生成的独立客户端密钥
 docker compose up -d --build
 docker compose logs -f relay
 ```
@@ -59,6 +59,8 @@ PTR 由服务器供应商设置：
 ```text
 203.0.113.10 -> mailout.example.com
 ```
+
+`MAIL_PUBLIC_IPS` 必须填写该节点真实 SMTP 出口公网 IP。LONGOS 会以 HMAC 读取 `/v1/identity` 的主机名、IP 和 DKIM 公钥并交叉核对配置；接口不返回私钥、HMAC 密钥、队列内容或邮件内容。PTR 无法由这个接口、Cloudflare 或 HTTPS 反向代理代设，仍必须在 IP 服务商后台完成。
 
 首次启动会生成 2048 位 DKIM 密钥并在日志中打印 TXT 记录。也可以随时查看：
 

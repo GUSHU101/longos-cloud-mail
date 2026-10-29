@@ -83,6 +83,7 @@ Compose 不声明 80/443，不依赖 Coolify Proxy，也不会加入 3X-UI 的 D
 公开设置可以参考 [`mail-relay/coolify.env.example`](../mail-relay/coolify.env.example) 粘贴到 Environment Variables 的 Developer view：
 
 ```dotenv
+MAIL_NODE_PROFILE_VERSION=1
 MAIL_HOSTNAME=mailout.example.com
 MAIL_PUBLIC_IPS=<第二台服务器真实公网 IP>
 MAIL_DOMAINS=example.com
@@ -102,6 +103,8 @@ TUNNEL_MEMORY_LIMIT=256m
 TUNNEL_MEMORY_RESERVATION=64m
 TUNNEL_PIDS_LIMIT=128
 ```
+
+这组公开变量现在由 LONGOS 后台“邮件设置 -> 全平台邮件出口拓扑 -> 第二台服务器部署参数”按同一版本契约生成，可直接复制或下载 `.env`；不要手工把 Secret 补进下载文件。`MAIL_NODE_PROFILE_VERSION` 不匹配时远端节点会拒绝启动，避免旧后台参数静默套用到不兼容的新节点。
 
 `MAIL_NODE_VOLUME_PREFIX` 首次部署后不要修改，否则 Compose 会创建一套新卷，看起来像 DKIM、队列和幂等记录“丢失”。
 

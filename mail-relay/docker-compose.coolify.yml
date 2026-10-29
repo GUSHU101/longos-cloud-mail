@@ -6,6 +6,7 @@ services:
     init: true
     environment:
       NODE_ENV: production
+      MAIL_NODE_PROFILE_VERSION: ${MAIL_NODE_PROFILE_VERSION:-1}
       MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Set the PTR-aligned mail hostname}
       MAIL_PUBLIC_IPS: ${MAIL_PUBLIC_IPS:?Set the dedicated SMTP egress public IP}
       MAIL_DOMAINS: ${MAIL_DOMAINS:?Set the DKIM signing domains}

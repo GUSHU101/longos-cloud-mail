@@ -1,0 +1,32 @@
+{
+  "version": "1",
+  "identityVariables": [
+    "MAIL_HOSTNAME",
+    "MAIL_PUBLIC_IPS",
+    "MAIL_DOMAINS",
+    "ALLOWED_SENDER_DOMAINS",
+    "DKIM_SELECTOR"
+  ],
+  "publicDefaults": {
+    "MAIL_NODE_PROFILE_VERSION": "1",
+    "DKIM_SELECTOR": "mail2026",
+    "INET_PROTOCOLS": "ipv4",
+    "RELAY_HTTP_PORT": "8788",
+    "MAIL_NODE_VOLUME_PREFIX": "longos-remote-mail",
+    "TUNNEL_PROTOCOL": "auto",
+    "TUNNEL_LOG_LEVEL": "info",
+    "TUNNEL_METRICS_ADDRESS": "127.0.0.1:20246",
+    "CLOUDFLARED_IMAGE": "cloudflare/cloudflared:2026.10.5",
+    "RELAY_MEMORY_LIMIT": "768m",
+    "RELAY_MEMORY_RESERVATION": "256m",
+    "RELAY_PIDS_LIMIT": "256",
+    "TUNNEL_MEMORY_LIMIT": "256m",
+    "TUNNEL_MEMORY_RESERVATION": "64m",
+    "TUNNEL_PIDS_LIMIT": "128"
+  },
+  "secretVariables": [
+    "LONGOS_RELAY_SHARED_SECRET",
+    "CLOUD_MAIL_RELAY_SHARED_SECRET",
+    "TUNNEL_TOKEN"
+  ]
+}

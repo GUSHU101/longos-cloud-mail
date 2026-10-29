@@ -46,11 +46,13 @@ test('fails final acceptance for real inbound or outbound DNS errors', () => {
 
 test('preflights account resources, zones and the LONGOS gateway before preparing dependencies or creating storage', () => {
   const accountPreflight = source.indexOf('preflightCloudflareAccountResources({');
+  const domainOwnership = source.indexOf('assertWorkerCustomDomainOwnership({');
   const zonePreflight = source.indexOf('preflightCloudflareZones({');
   const relayPreflight = source.indexOf("[预检] 验证 LONGOS 主站邮件网关");
   const dependencyPreparation = source.indexOf('resolvePnpmCommand()', accountPreflight);
   const d1Mutation = source.indexOf("wrangler(['d1', 'create'");
-  assert.ok(accountPreflight > 0 && zonePreflight > accountPreflight && relayPreflight > zonePreflight);
+  assert.ok(accountPreflight > 0 && domainOwnership > accountPreflight);
+  assert.ok(zonePreflight > domainOwnership && relayPreflight > zonePreflight);
   assert.ok(dependencyPreparation > relayPreflight);
   assert.ok(d1Mutation > relayPreflight);
 });

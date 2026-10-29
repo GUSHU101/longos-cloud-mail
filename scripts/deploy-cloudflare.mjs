@@ -24,6 +24,7 @@ import {
   inspectCloudflareR2Bucket,
   waitForCloudflareR2Bucket,
 } from './cloudflare-r2-state.mjs';
+import { assertWorkerCustomDomainOwnership } from './cloudflare-worker-domain-state.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
@@ -348,6 +349,24 @@ try {
 }
 for (const item of accountPreflight) {
   console.log(`✓ ${item.label} 账户 API 可访问；部署写入仍要求 ${item.permission}`);
+}
+
+if (config.CUSTOM_DOMAIN) {
+  console.log('\n[升级保护] 核对自定义域与现有 Worker 归属');
+  let domainOwnership;
+  try {
+    domainOwnership = await assertWorkerCustomDomainOwnership({
+      token: config.CLOUDFLARE_API_TOKEN,
+      accountId: config.CLOUDFLARE_ACCOUNT_ID,
+      hostname: config.CUSTOM_DOMAIN,
+      workerName: config.NAME,
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+  console.log(domainOwnership.exists
+    ? `✓ ${config.CUSTOM_DOMAIN} 仍绑定原 Worker ${config.NAME}。`
+    : `✓ ${config.CUSTOM_DOMAIN} 尚未绑定 Worker，按首次部署继续。`);
 }
 
 console.log('\n[预检] 验证 Cloudflare Zone、自定义域和 Email Routing 访问范围');

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       worker_name:
-        description: "Worker 名称（通常保持 cloud-mail）"
+        description: "Worker 名称（升级必须保持原名；不是仓库名，现有通常为 cloud-mail）"
         required: false
         default: "cloud-mail"
         type: string

@@ -5,6 +5,7 @@ import {buildWorkflowInputs} from './trigger-github-deployment.mjs';
 import {deploymentEnvironment} from './deploy-wizard.mjs';
 
 const source = readFileSync(new URL('./deploy-wizard.mjs', import.meta.url), 'utf8');
+const deploymentSource = readFileSync(new URL('./deploy-cloudflare.mjs', import.meta.url), 'utf8');
 
 test('passes one-time credentials only through the deployment child environment', () => {
   const inputs = buildWorkflowInputs({
@@ -45,4 +46,10 @@ test('does not persist or place credentials in command arguments', () => {
   assert.match(source, /如需复制或分享部署日志/);
   assert.match(source, /保留本次全部输入并立即重试/);
   assert.match(source, /不会要求再次输入/);
+});
+
+test('automatically retries only recognized transient Cloudflare asset upload failures', () => {
+  assert.match(deploymentSource, /deployWithCloudflareRetry/);
+  assert.match(deploymentSource, /Workers Assets 上传会话返回 5xx\/10013/);
+  assert.match(deploymentSource, /线上现有 Worker 不受影响/);
 });

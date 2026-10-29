@@ -25,6 +25,10 @@ import {
   waitForCloudflareR2Bucket,
 } from './cloudflare-r2-state.mjs';
 import { assertWorkerCustomDomainOwnership } from './cloudflare-worker-domain-state.mjs';
+import {
+  deployWithCloudflareRetry,
+  isRetryableCloudflareAssetsFailure,
+} from './cloudflare-deploy-retry.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
@@ -571,10 +575,20 @@ const secretFile = join(secretTempDirectory, 'worker-secrets.json');
 writeFileSync(secretFile, JSON.stringify(deploymentSecrets), { encoding: 'utf8', mode: 0o600 });
 let deployment;
 try {
-  deployment = wrangler(['deploy', '-c', generatedConfig, '--secrets-file', secretFile], {
-    env: deploymentEnv,
-    capture: true,
-    allowFailure: true,
+  deployment = await deployWithCloudflareRetry(() => wrangler(
+    ['deploy', '-c', generatedConfig, '--secrets-file', secretFile],
+    {
+      env: deploymentEnv,
+      capture: true,
+      allowFailure: true,
+    },
+  ), {
+    onRetry: ({attempt, delayMs, maximumAttempts}) => {
+      console.error(
+        `[Cloudflare 临时异常] Workers Assets 上传会话返回 5xx/10013；`
+        + `第 ${attempt}/${maximumAttempts} 次失败，${delayMs / 1000} 秒后自动重试。线上现有 Worker 不受影响。`,
+      );
+    },
   });
 } finally {
   rmSync(secretTempDirectory, { recursive: true, force: true });
@@ -582,7 +596,10 @@ try {
 if (deployment.status !== 0) {
   if (deployment.stdout) console.error(deployment.stdout.trim());
   if (deployment.stderr) console.error(deployment.stderr.trim());
-  fail(`Worker 部署失败（退出码 ${deployment.status}）。`);
+  const retryHint = isRetryableCloudflareAssetsFailure(deployment)
+    ? `Cloudflare Workers Assets API 在 ${deployment.attempts} 次自动尝试后仍返回 5xx/10013；线上旧版本未被替换。请稍后重试，持续失败时携带 Wrangler 日志联系 Cloudflare。`
+    : `Worker 部署失败（退出码 ${deployment.status}）。`;
+  fail(retryHint);
 }
 
 // The successful deployment already contains a temporary, privileged

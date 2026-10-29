@@ -46,6 +46,22 @@ test('production secrets are scoped to the deploy step instead of the whole job'
   assert.match(source, /--from-env --skip-verification/);
 });
 
+test('missing production credentials fail before checkout without exposing their values', () => {
+  const preflight = source.indexOf('id: credential_preflight');
+  const checkout = source.indexOf('actions/checkout@');
+  const verification = source.indexOf('node scripts/verify-deployment.mjs');
+
+  assert.ok(preflight > 0 && preflight < checkout && checkout < verification);
+  assert.match(source, /CF_TOKEN_CONFIGURED: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN != '' \}\}/);
+  assert.match(source, /LONGOS_TOKEN_CONFIGURED: \$\{\{ secrets\.LONGOS_INTEGRATION_TOKEN != '' \}\}/);
+  assert.match(source, /Settings → Environments → production/);
+  assert.match(source, /node scripts\/trigger-github-deployment\.mjs/);
+  assert.doesNotMatch(
+    source.slice(preflight, checkout),
+    /CLOUDFLARE_API_TOKEN:\s*\$\{\{\s*secrets\./,
+  );
+});
+
 test('all non-secret deployment settings are supplied at dispatch time', () => {
   const inputNames = [...source.matchAll(/^      ([a-z][a-z0-9_]+):$/gm)].map(match => match[1]);
   assert.deepEqual(inputNames, [

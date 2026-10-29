@@ -99,6 +99,45 @@ jobs:
       r2_bucket_name: ${{ steps.deploy.outputs.r2_bucket_name }}
 
     steps:
+      # Only boolean presence flags enter this step. The credential values
+      # remain unavailable until the final deployment step, after the
+      # secret-free build and test suite has passed.
+      - name: 🔐 检查 production Secrets / Check deployment credentials
+        id: credential_preflight
+        shell: bash
+        env:
+          CF_TOKEN_CONFIGURED: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          LONGOS_TOKEN_CONFIGURED: ${{ secrets.LONGOS_INTEGRATION_TOKEN != '' }}
+          ADMIN_PASSWORD_CONFIGURED: ${{ secrets.ADMIN_PASSWORD != '' }}
+          LONGOS_GATEWAY_CONFIGURED: ${{ inputs.longos_relay_url != '' }}
+        run: |
+          missing=()
+          [[ "$CF_TOKEN_CONFIGURED" == "true" ]] || missing+=("CLOUDFLARE_API_TOKEN")
+          if [[ "$LONGOS_GATEWAY_CONFIGURED" == "true" && "$LONGOS_TOKEN_CONFIGURED" != "true" ]]; then
+            missing+=("LONGOS_INTEGRATION_TOKEN")
+          fi
+
+          if (( ${#missing[@]} > 0 )); then
+            missing_list="$(IFS=', '; echo "${missing[*]}")"
+            echo "::error title=production Secrets 缺失::请先在 Settings → Environments → production 添加：${missing_list}"
+            {
+              echo "## 部署尚未开始：production Secrets 缺失"
+              echo
+              echo "当前缺少：\`${missing_list}\`"
+              echo
+              echo "1. 打开 **Settings → Environments → production → Environment secrets**。"
+              echo "2. 添加上述 Secret；不要放到 Variables，也不要粘贴到 Run workflow 文本框。"
+              echo "3. 从可信终端运行 \`node scripts/trigger-github-deployment.mjs\` 可隐藏录入并自动配置。"
+              echo "4. 修复后使用原来的 Worker、D1、KV 和 R2 名称重跑，不要删除现有资源。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if [[ "$ADMIN_PASSWORD_CONFIGURED" != "true" ]]; then
+            echo "::notice title=ADMIN_PASSWORD 未配置::升级已有管理员时可留空；全新 D1 首次部署前必须添加。"
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
       - name: 🚚 检出代码仓库 / Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -158,6 +197,7 @@ jobs:
         if: always()
         shell: bash
         env:
+          CREDENTIAL_PREFLIGHT: ${{ steps.credential_preflight.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
           WORKER_STATE: ${{ steps.deploy.outputs.worker_state }}
@@ -171,7 +211,10 @@ jobs:
           {
             echo "## LONGOS Cloud Mail deployment"
             echo
-            if [[ "$DEPLOY_OUTCOME" == "success" ]]; then
+            if [[ "$CREDENTIAL_PREFLIGHT" != "success" ]]; then
+              echo "❌ 生产凭据预检未通过，Worker 与 Cloudflare 数据均未修改。"
+              echo "- 在 **Settings → Environments → production** 补齐日志列出的 Environment Secrets 后重跑。"
+            elif [[ "$DEPLOY_OUTCOME" == "success" ]]; then
               echo "✅ Worker、数据库初始化、临时密钥撤销、收信路由和发信 DNS 验收已通过。"
               [[ -n "$WORKER_URL" ]] && echo "- 地址：[$WORKER_URL]($WORKER_URL)"
               echo "- Worker：$WORKER_STATE"

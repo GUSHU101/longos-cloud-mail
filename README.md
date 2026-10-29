@@ -36,6 +36,8 @@ node scripts/deploy-wizard.mjs
 
 需要团队审批、审计记录和集中发布时，再使用 `Actions → Deploy cloud-mail to Cloudflare Workers`。GitHub 手动工作流没有密文输入控件，所以该方式必须把密钥保存到受保护的 `production` Environment；`node scripts/trigger-github-deployment.mjs` 只是隐藏录入并触发工作流，不能把 GitHub Environment 变成一次性密钥存储。
 
+部署工作流会在检出代码和安装依赖前只用布尔标志检查必需 Secret 是否存在；缺失时会直接列出名称并停止，不会修改 Worker、D1、KV 或 R2。原始 Token 仍只会在无密钥测试和生产构建全部通过后，注入最终部署步骤。
+
 两种方式都会自动启用 Email Routing、把 Catch-all 指向 Worker，并读取 LONGOS 的公开 DNS 清单后直接发布 DKIM/DMARC、合并 SPF 与校准 DNS-only 邮件主机；LONGOS 会在 `MAIL_RELAY_IPS` 留空时以多源一致性安全识别服务器公网出口。Cloudflare Token 永远不会发送给 LONGOS，也无需保存到 Coolify。
 
 完整的逐项页面路径、API Token 权限、变量表、Cloudflare Email Routing、网站关联和验收方法都集中在：

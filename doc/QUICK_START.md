@@ -176,6 +176,7 @@ Cloud Mail 网页发信和 LONGOS 业务邮件共用邮局，但入口不同，�
 | 现象 | 原因与处理 |
 |---|---|
 | Actions 中没有 `Run workflow` | 确认工作流文件已在仓库默认分支、Actions 已启用，并从工作流详情页而非单次运行页操作 |
+| 启动后立即提示 `production Secrets 缺失` | 这表示尚未触及 Cloudflare，不是 Worker、D1 或邮件数据故障。进入 `Settings → Environments → production → Environment secrets` 添加日志列出的名称，或在可信终端运行 `node scripts/trigger-github-deployment.mjs` 隐藏录入并自动触发。不要把 Token 存成 Variable |
 | GitHub Job 立即显示 Skipped | 生产工作流只允许仓库所有者、默认分支和手动触发；请由所有者重新运行，不要使用协作者账号或临时分支 |
 | 一直显示 Waiting | `production` Environment 正在等待审批；单人仓库若开启 Prevent self-review 会无人可批准 |
 | `Authentication error [10000]` | 看报错前面的资源名：若是 D1/KV/R2/Worker 列表，Token 已激活但漏选了该账户级权限或 Account Resources 选错；若是 Zone API，检查 Zone 权限和 Zone Resources。按第 4 节重新创建 Token，不要只更换 Account ID |

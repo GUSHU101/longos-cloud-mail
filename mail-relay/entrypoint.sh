@@ -178,6 +178,23 @@ postconf -e "milter_default_action = tempfail"
 postconf -e "milter_protocol = 6"
 postconf -e "non_smtpd_milters = inet:127.0.0.1:8891"
 
+# Debian runs Postfix delivery processes inside queue_directory. The queue is
+# a persistent Docker volume, so its resolver files can otherwise remain empty
+# or retain a resolver from the image-build container forever. Refresh the
+# chroot from Docker's live network namespace on every start before Postfix
+# accepts mail.
+postfix_queue_directory="$(postconf -h queue_directory)"
+postfix_chroot_etc="$postfix_queue_directory/etc"
+mkdir -p "$postfix_chroot_etc"
+for postfix_runtime_file in resolv.conf hosts nsswitch.conf services; do
+  postfix_runtime_source="/etc/$postfix_runtime_file"
+  [ -r "$postfix_runtime_source" ] || continue
+  postfix_runtime_temp="$postfix_chroot_etc/$postfix_runtime_file.tmp.$$"
+  cp -L "$postfix_runtime_source" "$postfix_runtime_temp"
+  chmod 0644 "$postfix_runtime_temp"
+  mv -f "$postfix_runtime_temp" "$postfix_chroot_etc/$postfix_runtime_file"
+done
+
 opendkim -x /etc/opendkim.conf
 postfix check
 postfix start

@@ -47,6 +47,16 @@ for (const [network, prefix, type] of [
   ['ff00::', 8, 'ipv6'],
 ]) nonPublicIpRanges.addSubnet(network, prefix, type);
 
+function postfixResolverFilesReady() {
+  try {
+    const live = readFileSync('/etc/resolv.conf', 'utf8').trim();
+    const chroot = readFileSync('/var/spool/postfix/etc/resolv.conf', 'utf8').trim();
+    return live !== '' && live === chroot;
+  } catch {
+    return false;
+  }
+}
+
 const port = toPositiveInt(process.env.PORT, 3000);
 const legacySharedSecret = readSecret('RELAY_SHARED_SECRET');
 const explicitLongosSharedSecret = readSecret('LONGOS_RELAY_SHARED_SECRET');
@@ -806,7 +816,7 @@ async function relayHealth(force = false) {
         return { ok: false, stdout: '' };
       }
     };
-    const [postfix, opendkim, queue] = await Promise.all([
+    const [postfix, opendkim, queue, dns] = await Promise.all([
       runHealthCommand('postfix', ['status'], { timeout: 3_000, windowsHide: true }),
       runHealthCommand('pgrep', ['-x', 'opendkim'], { timeout: 3_000, windowsHide: true }),
       runHealthCommand('postqueue', ['-j'], {
@@ -815,6 +825,7 @@ async function relayHealth(force = false) {
         maxBuffer: 4 * 1024 * 1024,
         windowsHide: true,
       }),
+      runHealthCommand('getent', ['ahostsv4', 'example.com'], { timeout: 3_000, windowsHide: true }),
     ]);
     const queueDepth = queue.ok
       ? String(queue.stdout).split('\n').filter(line => line.trim() !== '').length
@@ -822,6 +833,7 @@ async function relayHealth(force = false) {
     const components = {
       postfix: postfix.ok,
       opendkim: opendkim.ok,
+      dns: dns.ok && postfixResolverFilesReady(),
       queue: queue.ok && queueDepth <= maxQueueMessages,
       receiptStore: receiptStoreHealthy && storeWritable && receiptCapacityAvailable(),
     };

@@ -29,6 +29,8 @@ import {
   deployWithCloudflareRetry,
   isRetryableCloudflareAssetsFailure,
 } from './cloudflare-deploy-retry.mjs';
+import {writeCloudflareSupportReport} from './cloudflare-support-report.mjs';
+import {formatBytes, inspectWorkerAssets} from './worker-assets-preflight.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workerRoot = join(repositoryRoot, 'mail-worker');
@@ -524,6 +526,16 @@ if (config.R2_BUCKET_NAME) {
 }
 
 console.log('\n[5/8] 生成生产配置，原子写入 Secret 并部署 Worker');
+let assetInspection;
+try {
+  assetInspection = inspectWorkerAssets(join(workerRoot, 'dist'));
+} catch (error) {
+  fail(`Worker 静态资源预检失败：${error.message}`);
+}
+console.log(
+  `✓ 静态资源预检：${assetInspection.fileCount} 个文件，合计 ${formatBytes(assetInspection.totalBytes)}，`
+  + `最大文件 ${formatBytes(assetInspection.largestFile.size)}，清单 ${assetInspection.manifestSha256.slice(0, 12)}…`,
+);
 let wranglerConfig = readFileSync(join(workerRoot, 'wrangler-action.toml'), 'utf8');
 if (!config.CUSTOM_DOMAIN) wranglerConfig = removeTomlBlock(wranglerConfig, '[[routes]]');
 if (!config.R2_BUCKET_NAME) wranglerConfig = removeTomlBlock(wranglerConfig, '[[r2_buckets]]');
@@ -596,8 +608,30 @@ try {
 if (deployment.status !== 0) {
   if (deployment.stdout) console.error(deployment.stdout.trim());
   if (deployment.stderr) console.error(deployment.stderr.trim());
-  const retryHint = isRetryableCloudflareAssetsFailure(deployment)
-    ? `Cloudflare Workers Assets API 在 ${deployment.attempts} 次自动尝试后仍返回 5xx/10013；线上旧版本未被替换。请稍后重试，持续失败时携带 Wrangler 日志联系 Cloudflare。`
+  const retryableAssetsFailure = isRetryableCloudflareAssetsFailure(deployment);
+  let supportReport = '';
+  if (retryableAssetsFailure) {
+    try {
+      let wranglerVersion = 'unknown';
+      try {
+        wranglerVersion = JSON.parse(
+          readFileSync(join(workerRoot, 'node_modules', 'wrangler', 'package.json'), 'utf8'),
+        ).version || 'unknown';
+      } catch {}
+      supportReport = writeCloudflareSupportReport({
+        result: deployment,
+        workerName: config.NAME,
+        accountId: config.CLOUDFLARE_ACCOUNT_ID,
+        wranglerVersion,
+        assets: assetInspection,
+      });
+      console.error(`[支持报告] 已生成不含 Token、密码和 Worker Secret 的诊断文件：${supportReport}`);
+    } catch (error) {
+      console.error(`[支持报告] 生成失败，但不影响原始部署错误判断：${error.message}`);
+    }
+  }
+  const retryHint = retryableAssetsFailure
+    ? `Cloudflare Workers Assets API 在 ${deployment.attempts} 次自动尝试后仍返回 5xx/10013；线上旧版本未被替换。请稍后重试${supportReport ? `，持续失败时将支持报告提交给 Cloudflare：${supportReport}` : '；持续失败时携带上方 Wrangler 日志联系 Cloudflare'}。`
     : `Worker 部署失败（退出码 ${deployment.status}）。`;
   fail(retryHint);
 }

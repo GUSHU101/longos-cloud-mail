@@ -100,6 +100,8 @@ node scripts/deploy-wizard.mjs
 
 无需预装 pnpm 或 Corepack。若两者都不存在，部署器会从 npm 官方注册表临时安装与 CI 一致的固定版 pnpm，禁用安装脚本并在部署结束后自动删除；Cloudflare Token、管理员密码等部署凭据不会传给 npm。
 
+部署前会校验静态资源数量、单文件大小、符号链接和疑似密钥文件，并显示资源清单哈希。若 Cloudflare Workers Assets 的 `assets-upload-session` 临时返回 5xx/`10013`，部署器会自动退避重试；多次失败后保持线上旧版本不变，并在系统临时目录生成不含密钥的 JSON 支持报告。
+
 只有非交互自动化或排障才需要明文配置文件：
 
 ```bash
